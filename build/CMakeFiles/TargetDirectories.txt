@@ -1,0 +1,7 @@
+/home/bobo/mini_redis_cpp/build/CMakeFiles/mini_redis_server.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/edit_cache.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/rebuild_cache.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/list_install_components.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/install.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/install/local.dir
+/home/bobo/mini_redis_cpp/build/CMakeFiles/install/strip.dir
