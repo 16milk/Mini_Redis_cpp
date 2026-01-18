@@ -167,10 +167,52 @@ CMakeFiles/mini_redis_server.dir/RedisObject.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mini_redis_server.dir/RedisObject.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/bobo/mini_redis_cpp/RedisObject.cpp -o CMakeFiles/mini_redis_server.dir/RedisObject.cpp.s
 
+CMakeFiles/mini_redis_server.dir/StringObject.cpp.o: CMakeFiles/mini_redis_server.dir/flags.make
+CMakeFiles/mini_redis_server.dir/StringObject.cpp.o: /home/bobo/mini_redis_cpp/StringObject.cpp
+CMakeFiles/mini_redis_server.dir/StringObject.cpp.o: CMakeFiles/mini_redis_server.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/mini_redis_server.dir/StringObject.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mini_redis_server.dir/StringObject.cpp.o -MF CMakeFiles/mini_redis_server.dir/StringObject.cpp.o.d -o CMakeFiles/mini_redis_server.dir/StringObject.cpp.o -c /home/bobo/mini_redis_cpp/StringObject.cpp
+
+CMakeFiles/mini_redis_server.dir/StringObject.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mini_redis_server.dir/StringObject.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/bobo/mini_redis_cpp/StringObject.cpp > CMakeFiles/mini_redis_server.dir/StringObject.cpp.i
+
+CMakeFiles/mini_redis_server.dir/StringObject.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mini_redis_server.dir/StringObject.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/bobo/mini_redis_cpp/StringObject.cpp -o CMakeFiles/mini_redis_server.dir/StringObject.cpp.s
+
+CMakeFiles/mini_redis_server.dir/HashObject.cpp.o: CMakeFiles/mini_redis_server.dir/flags.make
+CMakeFiles/mini_redis_server.dir/HashObject.cpp.o: /home/bobo/mini_redis_cpp/HashObject.cpp
+CMakeFiles/mini_redis_server.dir/HashObject.cpp.o: CMakeFiles/mini_redis_server.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object CMakeFiles/mini_redis_server.dir/HashObject.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mini_redis_server.dir/HashObject.cpp.o -MF CMakeFiles/mini_redis_server.dir/HashObject.cpp.o.d -o CMakeFiles/mini_redis_server.dir/HashObject.cpp.o -c /home/bobo/mini_redis_cpp/HashObject.cpp
+
+CMakeFiles/mini_redis_server.dir/HashObject.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mini_redis_server.dir/HashObject.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/bobo/mini_redis_cpp/HashObject.cpp > CMakeFiles/mini_redis_server.dir/HashObject.cpp.i
+
+CMakeFiles/mini_redis_server.dir/HashObject.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mini_redis_server.dir/HashObject.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/bobo/mini_redis_cpp/HashObject.cpp -o CMakeFiles/mini_redis_server.dir/HashObject.cpp.s
+
+CMakeFiles/mini_redis_server.dir/Dict.cpp.o: CMakeFiles/mini_redis_server.dir/flags.make
+CMakeFiles/mini_redis_server.dir/Dict.cpp.o: /home/bobo/mini_redis_cpp/Dict.cpp
+CMakeFiles/mini_redis_server.dir/Dict.cpp.o: CMakeFiles/mini_redis_server.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building CXX object CMakeFiles/mini_redis_server.dir/Dict.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mini_redis_server.dir/Dict.cpp.o -MF CMakeFiles/mini_redis_server.dir/Dict.cpp.o.d -o CMakeFiles/mini_redis_server.dir/Dict.cpp.o -c /home/bobo/mini_redis_cpp/Dict.cpp
+
+CMakeFiles/mini_redis_server.dir/Dict.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/mini_redis_server.dir/Dict.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/bobo/mini_redis_cpp/Dict.cpp > CMakeFiles/mini_redis_server.dir/Dict.cpp.i
+
+CMakeFiles/mini_redis_server.dir/Dict.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/mini_redis_server.dir/Dict.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/bobo/mini_redis_cpp/Dict.cpp -o CMakeFiles/mini_redis_server.dir/Dict.cpp.s
+
 CMakeFiles/mini_redis_server.dir/Rdb.cpp.o: CMakeFiles/mini_redis_server.dir/flags.make
 CMakeFiles/mini_redis_server.dir/Rdb.cpp.o: /home/bobo/mini_redis_cpp/Rdb.cpp
 CMakeFiles/mini_redis_server.dir/Rdb.cpp.o: CMakeFiles/mini_redis_server.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/mini_redis_server.dir/Rdb.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building CXX object CMakeFiles/mini_redis_server.dir/Rdb.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/mini_redis_server.dir/Rdb.cpp.o -MF CMakeFiles/mini_redis_server.dir/Rdb.cpp.o.d -o CMakeFiles/mini_redis_server.dir/Rdb.cpp.o -c /home/bobo/mini_redis_cpp/Rdb.cpp
 
 CMakeFiles/mini_redis_server.dir/Rdb.cpp.i: cmake_force
@@ -190,6 +232,9 @@ mini_redis_server_OBJECTS = \
 "CMakeFiles/mini_redis_server.dir/Database.cpp.o" \
 "CMakeFiles/mini_redis_server.dir/Command.cpp.o" \
 "CMakeFiles/mini_redis_server.dir/RedisObject.cpp.o" \
+"CMakeFiles/mini_redis_server.dir/StringObject.cpp.o" \
+"CMakeFiles/mini_redis_server.dir/HashObject.cpp.o" \
+"CMakeFiles/mini_redis_server.dir/Dict.cpp.o" \
 "CMakeFiles/mini_redis_server.dir/Rdb.cpp.o"
 
 # External object files for target mini_redis_server
@@ -202,10 +247,13 @@ bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/Protocol.cpp.o
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/Database.cpp.o
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/Command.cpp.o
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/RedisObject.cpp.o
+bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/StringObject.cpp.o
+bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/HashObject.cpp.o
+bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/Dict.cpp.o
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/Rdb.cpp.o
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/build.make
 bin/mini_redis_server: CMakeFiles/mini_redis_server.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX executable bin/mini_redis_server"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/bobo/mini_redis_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Linking CXX executable bin/mini_redis_server"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/mini_redis_server.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

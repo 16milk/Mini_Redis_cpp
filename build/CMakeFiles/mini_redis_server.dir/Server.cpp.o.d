@@ -157,8 +157,7 @@ CMakeFiles/mini_redis_server.dir/Server.cpp.o: \
  /usr/include/x86_64-linux-gnu/bits/types/error_t.h \
  /usr/include/c++/13/bits/charconv.h \
  /usr/include/c++/13/bits/basic_string.tcc \
- /home/bobo/mini_redis_cpp/Database.hpp \
- /home/bobo/mini_redis_cpp/RedisObject.hpp /usr/include/c++/13/vector \
+ /home/bobo/mini_redis_cpp/Database.hpp /usr/include/c++/13/vector \
  /usr/include/c++/13/bits/stl_vector.h \
  /usr/include/c++/13/bits/stl_bvector.h \
  /usr/include/c++/13/bits/vector.tcc /home/bobo/mini_redis_cpp/utils.hpp \

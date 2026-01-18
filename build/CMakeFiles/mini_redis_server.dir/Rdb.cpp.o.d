@@ -182,5 +182,18 @@ CMakeFiles/mini_redis_server.dir/Rdb.cpp.o: \
  /usr/include/c++/13/backward/auto_ptr.h \
  /usr/include/c++/13/pstl/glue_memory_defs.h \
  /usr/include/c++/13/pstl/execution_defs.h \
- /home/bobo/mini_redis_cpp/RedisObject.hpp /usr/include/c++/13/cstdint \
- /usr/include/c++/13/cstring /usr/include/string.h /usr/include/strings.h
+ /home/bobo/mini_redis_cpp/RedisObject.hpp \
+ /home/bobo/mini_redis_cpp/StringObject.hpp \
+ /home/bobo/mini_redis_cpp/HashObject.hpp \
+ /home/bobo/mini_redis_cpp/Dict.hpp /usr/include/c++/13/functional \
+ /usr/include/c++/13/bits/std_function.h /usr/include/c++/13/array \
+ /usr/include/c++/13/compare /usr/include/c++/13/bits/stl_algo.h \
+ /usr/include/c++/13/bits/algorithmfwd.h \
+ /usr/include/c++/13/bits/stl_heap.h \
+ /usr/include/c++/13/bits/uniform_int_dist.h /usr/include/c++/13/chrono \
+ /usr/include/c++/13/bits/chrono.h /usr/include/c++/13/ratio \
+ /usr/include/c++/13/cstdint /usr/include/c++/13/limits \
+ /usr/include/c++/13/ctime /usr/include/c++/13/bits/parse_numbers.h \
+ /usr/include/c++/13/variant /usr/include/c++/13/utility \
+ /usr/include/c++/13/bits/stl_relops.h /usr/include/c++/13/cstring \
+ /usr/include/string.h /usr/include/strings.h

@@ -246,6 +246,54 @@ Database.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/Database.cpp.s
 .PHONY : Database.cpp.s
 
+Dict.o: Dict.cpp.o
+.PHONY : Dict.o
+
+# target to build an object file
+Dict.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/Dict.cpp.o
+.PHONY : Dict.cpp.o
+
+Dict.i: Dict.cpp.i
+.PHONY : Dict.i
+
+# target to preprocess a source file
+Dict.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/Dict.cpp.i
+.PHONY : Dict.cpp.i
+
+Dict.s: Dict.cpp.s
+.PHONY : Dict.s
+
+# target to generate assembly for a file
+Dict.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/Dict.cpp.s
+.PHONY : Dict.cpp.s
+
+HashObject.o: HashObject.cpp.o
+.PHONY : HashObject.o
+
+# target to build an object file
+HashObject.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/HashObject.cpp.o
+.PHONY : HashObject.cpp.o
+
+HashObject.i: HashObject.cpp.i
+.PHONY : HashObject.i
+
+# target to preprocess a source file
+HashObject.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/HashObject.cpp.i
+.PHONY : HashObject.cpp.i
+
+HashObject.s: HashObject.cpp.s
+.PHONY : HashObject.s
+
+# target to generate assembly for a file
+HashObject.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/HashObject.cpp.s
+.PHONY : HashObject.cpp.s
+
 Protocol.o: Protocol.cpp.o
 .PHONY : Protocol.o
 
@@ -342,6 +390,30 @@ Server.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/Server.cpp.s
 .PHONY : Server.cpp.s
 
+StringObject.o: StringObject.cpp.o
+.PHONY : StringObject.o
+
+# target to build an object file
+StringObject.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/StringObject.cpp.o
+.PHONY : StringObject.cpp.o
+
+StringObject.i: StringObject.cpp.i
+.PHONY : StringObject.i
+
+# target to preprocess a source file
+StringObject.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/StringObject.cpp.i
+.PHONY : StringObject.cpp.i
+
+StringObject.s: StringObject.cpp.s
+.PHONY : StringObject.s
+
+# target to generate assembly for a file
+StringObject.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mini_redis_server.dir/build.make CMakeFiles/mini_redis_server.dir/StringObject.cpp.s
+.PHONY : StringObject.cpp.s
+
 main.o: main.cpp.o
 .PHONY : main.o
 
@@ -388,6 +460,12 @@ help:
 	@echo "... Database.o"
 	@echo "... Database.i"
 	@echo "... Database.s"
+	@echo "... Dict.o"
+	@echo "... Dict.i"
+	@echo "... Dict.s"
+	@echo "... HashObject.o"
+	@echo "... HashObject.i"
+	@echo "... HashObject.s"
 	@echo "... Protocol.o"
 	@echo "... Protocol.i"
 	@echo "... Protocol.s"
@@ -400,6 +478,9 @@ help:
 	@echo "... Server.o"
 	@echo "... Server.i"
 	@echo "... Server.s"
+	@echo "... StringObject.o"
+	@echo "... StringObject.i"
+	@echo "... StringObject.s"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"
