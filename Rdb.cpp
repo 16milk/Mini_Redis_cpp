@@ -1,9 +1,12 @@
 // Rdb.cpp
 #include "Rdb.hpp"
+#include "StringObject.hpp"   
+#include "HashObject.hpp" 
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
+
 
 // RDB 类型常量
 constexpr uint8_t RDB_TYPE_STRING = 0;
@@ -52,7 +55,7 @@ void RdbEncoder::writeKeyValuePair(std::ofstream& out, const std::string& key, R
         writeString(out, key);
         auto hash_obj = static_cast<HashObject*>(obj);
         writeLen(out, hash_obj->size());
-        for (const auto& [field, value] : hash_obj->getFields()) {
+        for (const auto& [field, value] : hash_obj->get_all_fields()) {
             writeString(out, field);
             writeString(out, value);
         }

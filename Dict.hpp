@@ -1,4 +1,5 @@
 // Dict.hpp
+#pragma once
 #include <vector>
 #include <memory>
 #include <string>
@@ -19,6 +20,14 @@ public:
     Dict();
     ~Dict() = default;
 
+    // 禁用拷贝
+    Dict(const Dict&) = delete;
+    Dict& operator=(const Dict&) = delete;
+
+    // 启用移动
+    Dict(Dict&&) noexcept = default;
+    Dict& operator=(Dict&&) noexcept = default;
+
     void set_field(std::string key, std::string value);
     bool get_field(const std::string& key, std::string& out_value) const;
     bool del_field(const std::string& key);
@@ -32,9 +41,13 @@ public:
     // 尝试在指定毫秒内推进 rehash
     void try_rehash_for_ms(int ms);
 
+    size_t memory_usage() const;
+
+    std::vector<std::pair<std::string, std::string>> get_all() const;
+
 private:
-    static const size_t INIT_HT_SIZE = 4;
-    static const size_t HASHTABLE_MIN_FILL = 10; // 缩容阈值（used / size < 10%）
+    static inline constexpr size_t INIT_HT_SIZE = 4;
+    static inline constexpr size_t HASHTABLE_MIN_FILL = 10; // 缩容阈值（used / size < 10%）
 
     using Clock = std::chrono::steady_clock;
     using TimePoint = std::chrono::time_point<Clock>;

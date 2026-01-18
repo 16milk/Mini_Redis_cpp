@@ -28,6 +28,9 @@ set(SOURCES
     Database.cpp
     Command.cpp
     RedisObject.cpp
+    StringObject.cpp   # 👈 确保包含
+    HashObject.cpp     # 👈 确保包含
+    Dict.cpp           # 👈 确保包含
     Rdb.cpp
     # 如果后续添加 Config.cpp，也加在这里
 )

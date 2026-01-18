@@ -166,3 +166,32 @@ void Dict::try_rehash_for_ms(int ms) {
         if (Clock::now() >= end) break;
     }
 }
+
+size_t Dict::memory_usage() const {
+    size_t total = sizeof(*this);
+    total += ht_[0].capacity() * sizeof(std::unique_ptr<HashEntry>);
+    total += ht_[1].capacity() * sizeof(std::unique_ptr<HashEntry>);
+    // 粗略估计 entry 内存（实际更复杂）
+    total += used_ * (sizeof(HashEntry) + 32); // 32 是 key/value 平均开销
+    return total;
+}
+
+std::vector<std::pair<std::string, std::string>> Dict::get_all() const {
+    std::vector<std::pair<std::string, std::string>> result;
+    result.reserve(used_); // 预分配空间
+
+    // 遍历 ht_[0] 和 ht_[1]
+    for (int table = 0; table <= 1; ++table) {
+        const auto& ht = ht_[table];
+        if (ht.empty()) continue;
+
+        for (const auto& head : ht) {
+            // 遍历链表
+            for (const HashEntry* p = head.get(); p != nullptr; p = p->next.get()) {
+                result.emplace_back(p->key, p->value);
+            }
+        }
+    }
+
+    return result;
+}

@@ -1,5 +1,10 @@
 // Database.cpp
+// Database.cpp
 #include "Database.hpp"
+#include "RedisObject.hpp"      // 定义 ObjectType, ObjectEncoding
+#include "StringObject.hpp"     // 用于 dynamic_cast / make_shared
+#include "HashObject.hpp"       // 同上
+#include "Dict.hpp"             // 用于 get_rehashing_dicts()
 #include "Rdb.hpp"
 #include <stdexcept>
 
@@ -73,7 +78,23 @@ bool Database::checkType(const std::string& key, ObjectType expected) const {
     return obj && obj->type() == expected;
 }
 
-// Database.cpp（新增实现）
+// Database.cpp
+std::vector<Dict*> Database::get_rehashing_dicts() {
+    std::vector<Dict*> result;
+    for (auto& [key, obj] : data_) {
+        if (obj->type() == ObjectType::HASH) {
+            auto* hash_obj = static_cast<HashObject*>(obj.get());
+            if (hash_obj->encoding() == ObjectEncoding::HASHTABLE) {
+                Dict& d = hash_obj->get_hashtable(); // 需要 non-const getter
+                if (d.is_rehashing()) {
+                    result.push_back(&d);
+                }
+            }
+        }
+        // TODO: 未来添加 SetObject、ZSetObject 的 rehash 检查
+    }
+    return result;
+}
 
 size_t Database::del(const std::vector<std::string>& keys) {
     size_t count = 0;
@@ -111,4 +132,13 @@ std::vector<std::string> Database::getAllKeys(const std::string& pattern) const 
 
 bool Database::saveRdb(const std::string& filename) const {
     return RdbEncoder::saveToFile(filename, data_);
+}
+
+size_t Database::memory_usage() const {
+    size_t total = sizeof(*this) + data_.bucket_count() * sizeof(void*);
+    for (const auto& [key, obj] : data_) {
+        total += key.capacity(); // key 字符串内存
+        total += obj->memory_usage();
+    }
+    return total;
 }

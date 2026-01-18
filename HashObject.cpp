@@ -36,15 +36,13 @@ void HashObject::promote_to_hashtable() {
 }
 
 //实现 ziplist 查找辅助函数
-auto HashObject::find_in_ziplist(const std::string& field)
-    -> std::vector<std::pair<std::string, std::string>>::iterator {
+Ziplist::iterator HashObject::find_in_ziplist(const std::string& field) {
     auto& zl = get_ziplist();
     return std::find_if(zl.begin(), zl.end(),
         [&](const auto& kv) { return kv.first == field; });
 }
 
-auto HashObject::find_in_ziplist(const std::string& field) const
-    -> std::vector<std::pair<std::string, std::string>>::const_iterator {
+Ziplist::const_iterator HashObject::find_in_ziplist(const std::string& field) const {
     const auto& zl = get_ziplist();
     return std::find_if(zl.begin(), zl.end(),
         [&](const auto& kv) { return kv.first == field; });
@@ -85,10 +83,7 @@ bool HashObject::get_field(const std::string& field, std::string& out_value) con
             return true;
         }
     } else {
-        auto& ht = get_hashtable();
-        if (get_field(field, out_value)) {
-            return true;
-        }
+        return get_hashtable().get_field(field, out_value);
     }
     return false;
 }
@@ -118,7 +113,7 @@ bool HashObject::exists(const std::string& field) const {
     if (encoding_ == ObjectEncoding::ZIPLIST) {
         return find_in_ziplist(field) != get_ziplist().end();
     } else {
-        string out_value;
+        std::string out_value;
         return get_hashtable().get_field(field, out_value);
     }
 }
@@ -126,5 +121,26 @@ bool HashObject::exists(const std::string& field) const {
 void HashObject::try_rehash_for_ms(int ms) {
     if (encoding_ == ObjectEncoding::HASHTABLE) {
         get_hashtable().try_rehash_for_ms(ms);
+    }
+}
+
+size_t HashObject::memory_usage() const {
+    if (encoding_ == ObjectEncoding::ZIPLIST) {
+        size_t total = sizeof(*this);
+        const auto& zl = get_ziplist();
+        for (const auto& kv : zl) {
+            total += kv.first.capacity() + kv.second.capacity();
+        }
+        return total;
+    } else {
+        return sizeof(*this) + get_hashtable().memory_usage();
+    }
+}
+
+std::vector<std::pair<std::string, std::string>> HashObject::get_all_fields() const {
+    if (encoding_ == ObjectEncoding::ZIPLIST) {
+        return get_ziplist(); // ziplist 本身就是 vector<pair>
+    } else {
+        return get_hashtable().get_all(); // 需要 Dict 也提供 get_all()
     }
 }

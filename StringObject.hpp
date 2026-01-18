@@ -7,8 +7,12 @@ class StringObject : public RedisObject {
 public:
     explicit StringObject(std::string value);
     
-    const std::string& value() const;
-    void set_value(std::string v);
+    ObjectType type() const override { return ObjectType::STRING; }
+    size_t memory_usage() const override;
+
+    void set_value(std::string v);  
+
+    const std::string& value() const { return value_; }
 
 private:
     std::string value_;
