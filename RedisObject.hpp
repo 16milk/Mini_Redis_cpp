@@ -23,6 +23,9 @@ public:
     template<typename T>
     T* as() { return dynamic_cast<T*>(this); }
 
-private:
+    template<typename T>
+    const T* as() const { return dynamic_cast<const T*>(this); }
+
+protected:
     ObjectType type_;
 };
