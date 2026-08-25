@@ -48,31 +48,32 @@ Ziplist::const_iterator HashObject::find_in_ziplist(const std::string& field) co
         [&](const auto& kv) { return kv.first == field; });
 }
 
-void HashObject::set_field(std::string field, std::string value) {
-    // 检查新 field/value 是否太大
+bool HashObject::set_field(std::string field, std::string value) {
     if (encoding_ == ObjectEncoding::ZIPLIST) {
+        auto it = find_in_ziplist(field);
+        if (it != get_ziplist().end()) {
+            it->second = std::move(value);
+            if (!should_use_ziplist()) {
+                promote_to_hashtable();
+            }
+            return false;
+        }
+
         if (field.size() > ZIPLIST_MAX_ENTRY_SIZE ||
             value.size() > ZIPLIST_MAX_ENTRY_SIZE) {
             promote_to_hashtable();
         }
-    }
 
-    if (encoding_ == ObjectEncoding::ZIPLIST) {
-        auto it = find_in_ziplist(field);
-        if (it != get_ziplist().end()) {
-            // 更新 existing
-            it->second = std::move(value);
-        } else {
-            // 新增
+        if (encoding_ == ObjectEncoding::ZIPLIST) {
             get_ziplist().emplace_back(std::move(field), std::move(value));
-            // 插入后检查是否超标
             if (!should_use_ziplist()) {
                 promote_to_hashtable();
             }
+            return true;
         }
-    } else {
-        get_hashtable().set_field(std::move(field), std::move(value)); 
     }
+
+    return get_hashtable().set_field(std::move(field), std::move(value));
 }
 
 bool HashObject::get_field(const std::string& field, std::string& out_value) const {

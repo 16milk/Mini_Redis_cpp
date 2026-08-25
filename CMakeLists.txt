@@ -54,6 +54,44 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_extended_types_test PRIVATE mini_redis_core)
     add_test(NAME extended_types COMMAND mini_redis_extended_types_test)
+
+    add_executable(mini_redis_network_io_test
+        tests/NetworkIoTest.cpp
+        src/net/Connection.cpp
+    )
+    target_link_libraries(mini_redis_network_io_test PRIVATE mini_redis_core)
+    add_test(NAME network_io COMMAND mini_redis_network_io_test)
+
+    add_executable(mini_redis_protocol_test
+        tests/ProtocolTest.cpp
+    )
+    target_link_libraries(mini_redis_protocol_test PRIVATE mini_redis_core)
+    add_test(NAME protocol COMMAND mini_redis_protocol_test)
+
+    add_executable(mini_redis_command_semantics_test
+        tests/CommandSemanticsTest.cpp
+    )
+    target_link_libraries(mini_redis_command_semantics_test PRIVATE mini_redis_core)
+    add_test(NAME command_semantics COMMAND mini_redis_command_semantics_test)
+
+    add_executable(mini_redis_hash_encoding_test
+        tests/HashEncodingTest.cpp
+    )
+    target_link_libraries(mini_redis_hash_encoding_test PRIVATE mini_redis_core)
+    add_test(NAME hash_encoding COMMAND mini_redis_hash_encoding_test)
+
+    add_executable(mini_redis_rdb_round_trip_test
+        tests/RdbRoundTripTest.cpp
+    )
+    target_link_libraries(mini_redis_rdb_round_trip_test PRIVATE mini_redis_core)
+    add_test(NAME rdb_round_trip COMMAND mini_redis_rdb_round_trip_test)
+
+    add_executable(mini_redis_multi_client_io_test
+        tests/MultiClientIoTest.cpp
+        src/net/Connection.cpp
+    )
+    target_link_libraries(mini_redis_multi_client_io_test PRIVATE mini_redis_core)
+    add_test(NAME multi_client_io COMMAND mini_redis_multi_client_io_test)
 endif()
 
 # （可选）设置输出目录

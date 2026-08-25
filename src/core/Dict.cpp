@@ -13,31 +13,39 @@ size_t Dict::hash_key(const std::string& key) const {
     return hasher(key) % ht_[0].size();
 }
 
-void Dict::set_field(std::string key, std::string value) {
+bool Dict::set_field(std::string key, std::string value) {
     // 如果正在 rehash，先迁移一个 bucket
     if (is_rehashing()) {
         rehash_step(1);
     }
 
-    size_t idx = hash_key(key);
-    auto& head = ht_[0][idx];
-
-    // 查找是否已存在
-    for (auto* p = head.get(); p; p = p->next.get()) {
-        if (p->key == key) {
-            p->value = std::move(value);
-            return;
+    // rehash 期间，既有 field 可能在任意一张表中。
+    for (int table = 0; table <= 1; ++table) {
+        if (ht_[table].empty()) {
+            continue;
+        }
+        const size_t index = std::hash<std::string>{}(key) % ht_[table].size();
+        for (auto* entry = ht_[table][index].get(); entry; entry = entry->next.get()) {
+            if (entry->key == key) {
+                entry->value = std::move(value);
+                return false;
+            }
+        }
+        if (!is_rehashing()) {
+            break;
         }
     }
 
-    // 不存在，插入新节点（头插）
+    const int destination = is_rehashing() ? 1 : 0;
+    const size_t index = std::hash<std::string>{}(key) % ht_[destination].size();
+    auto& head = ht_[destination][index];
     auto new_entry = std::make_unique<HashEntry>(std::move(key), std::move(value));
     new_entry->next = std::move(head);
     head = std::move(new_entry);
     used_++;
 
-    // 检查是否需要扩容
     expand_if_needed();
+    return true;
 }
 
 // 扩容检查

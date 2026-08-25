@@ -48,7 +48,8 @@ bool parseScoreBoundary(const std::string& value, double& out) {
 }
 
 std::string typeError(const std::exception& exception) {
-    return RespParser::encodeError(exception.what());
+    (void)exception;
+    return RespParser::encodeWrongTypeError();
 }
 
 } // namespace
@@ -131,15 +132,20 @@ std::string CommandHandler::execute(const std::vector<std::string>& args) {
     }
 }
 
-std::string CommandHandler::handlePing(const std::vector<std::string>& /*args*/) {
-    return RespParser::encodeSimpleString("PONG");
+std::string CommandHandler::handlePing(const std::vector<std::string>& args) {
+    if (args.size() == 1) {
+        return RespParser::encodeSimpleString("PONG");
+    }
+    if (args.size() == 2) {
+        return RespParser::encodeBulkString(args[1]);
+    }
+    return RespParser::encodeError("wrong number of arguments for 'PING'");
 }
 
 std::string CommandHandler::handleSet(const std::vector<std::string>& args) {
-    if (args.size() < 3) {
+    if (args.size() != 3) {
         return RespParser::encodeError("wrong number of arguments for 'SET'");
     }
-    // 支持 SET key value [EX seconds] ... 但阶段三只取前两个
     db_.set(args[1], args[2]);
     return RespParser::encodeSimpleString("OK");
 }
@@ -148,38 +154,36 @@ std::string CommandHandler::handleGet(const std::vector<std::string>& args) {
     if (args.size() != 2) {
         return RespParser::encodeError("wrong number of arguments for 'GET'");
     }
-    std::string value;
-    if (db_.get(args[1], value)) {
-        return RespParser::encodeBulkString(value);
-    } else {
-        return RespParser::encodeNullBulkString(); // $-1\r\n
-    }
+    try {
+        std::string value;
+        return db_.get(args[1], value) ? RespParser::encodeBulkString(value)
+                                       : RespParser::encodeNullBulkString();
+    } catch (const std::exception& exception) { return typeError(exception); }
 }
 
-// 在 Command.cpp 中添加
 std::string CommandHandler::handleHSet(const std::vector<std::string>& args) {
     if (args.size() < 4 || (args.size() - 2) % 2 != 0) {
         return RespParser::encodeError("wrong number of arguments for 'HSET'");
     }
     try {
-        // 阶段四只处理第一个 field-value 对（简化）
-        db_.hset(args[1], args[2], args[3]);
-        return RespParser::encodeInteger(1); // Redis 返回新增 field 数
-    } catch (const std::exception& e) {
-        return RespParser::encodeError(e.what());
-    }
+        std::vector<std::pair<std::string, std::string>> field_values;
+        field_values.reserve((args.size() - 2) / 2);
+        for (size_t index = 2; index < args.size(); index += 2) {
+            field_values.emplace_back(args[index], args[index + 1]);
+        }
+        return RespParser::encodeInteger(static_cast<long long>(db_.hset(args[1], field_values)));
+    } catch (const std::exception& exception) { return typeError(exception); }
 }
 
 std::string CommandHandler::handleHGet(const std::vector<std::string>& args) {
     if (args.size() != 3) {
         return RespParser::encodeError("wrong number of arguments for 'HGET'");
     }
-    std::string value;
-    if (db_.hget(args[1], args[2], value)) {
-        return RespParser::encodeBulkString(value);
-    } else {
-        return RespParser::encodeNullBulkString();
-    }
+    try {
+        std::string value;
+        return db_.hget(args[1], args[2], value) ? RespParser::encodeBulkString(value)
+                                                  : RespParser::encodeNullBulkString();
+    } catch (const std::exception& exception) { return typeError(exception); }
 }
 
 std::string CommandHandler::handleLPush(const std::vector<std::string>& args) {

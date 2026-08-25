@@ -7,8 +7,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <cerrno>
+#include <cstring>
 #include <iostream>
-#include <csignal>
 #include <vector>
 
 constexpr int MAX_EVENTS = 128;
@@ -76,9 +77,9 @@ void Server::accept_client() {
     auto conn = std::make_unique<Connection>(client_fd);
     connections_[client_fd] = std::move(conn);
 
-    // 将 client_fd 加入 epoll 监听（目前只监听可读，虽不做处理）
+    // 初始只监听可读；有待发送数据时 update_client_events 会额外启用 EPOLLOUT。
     struct epoll_event ev{};
-    ev.events = EPOLLIN;
+    ev.events = EPOLLIN | EPOLLRDHUP;
     ev.data.fd = client_fd;
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
         std::cerr << "[WARN] epoll_ctl add client failed" << std::endl;
@@ -88,6 +89,53 @@ void Server::accept_client() {
     }
 
     std::cout << "[INFO] Client connected, fd=" << client_fd << std::endl;
+}
+
+void Server::close_client(int fd) {
+    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+    connections_.erase(fd);
+}
+
+bool Server::update_client_events(int fd, const Connection& connection) {
+    struct epoll_event ev{};
+    if (!connection.peerReadClosed()) {
+        ev.events |= EPOLLIN | EPOLLRDHUP;
+    }
+    if (connection.hasPendingWrite()) {
+        ev.events |= EPOLLOUT;
+    }
+    ev.data.fd = fd;
+
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) == -1) {
+        std::cerr << "[WARN] epoll_ctl mod client failed, fd=" << fd
+                  << ": " << std::strerror(errno) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+void Server::process_client_input(Connection& connection) {
+    RespParser parser;
+    while (!connection.getReadBuffer().empty()) {
+        std::vector<std::string> args;
+        size_t bytes_consumed = 0;
+        const auto result = parser.parse(connection.getReadBuffer(), args, bytes_consumed);
+
+        if (result == RespParser::INCOMPLETE) {
+            return;
+        }
+
+        if (result == RespParser::ERROR) {
+            connection.sendResponse(RespParser::encodeError("protocol error"));
+            // 对畸形请求不存在可靠的帧边界；丢弃现有输入以便连接可继续使用。
+            connection.consumeInput(connection.getReadBuffer().size());
+            return;
+        }
+
+        extern std::unique_ptr<CommandHandler> g_cmd_handler;
+        connection.sendResponse(g_cmd_handler->execute(args));
+        connection.consumeInput(bytes_consumed);
+    }
 }
 
 void Server::run() {
@@ -115,46 +163,48 @@ void Server::run() {
             int fd = events[i].data.fd;
             if (fd == listen_fd_) {
                 accept_client();
-            // 在 Server::run() 的 for 循环内，替换原来的 else 块：
             } else {
                 auto it = connections_.find(fd);
-                if (it == connections_.end()) continue;
-
-                Connection* conn = it->second.get();
-
-                // 1. 读取数据
-                if (!conn->readFromSocket()) {
-                    std::cout << "[INFO] Client disconnected, fd=" << fd << std::endl;
-                    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
-                    connections_.erase(it);
+                if (it == connections_.end()) {
                     continue;
                 }
 
-                // 2. 尝试解析命令
-                std::vector<std::string> args;
-                RespParser parser;
-                auto result = parser.parse(conn->getReadBuffer(), args);
+                Connection* conn = it->second.get();
+                const uint32_t event_flags = events[i].events;
 
-                if (result == RespParser::ParseResult::COMPLETE) {
-                // 3. 处理命令（阶段二：只处理 PING）
-                    // 调用全局命令处理器
-                    extern std::unique_ptr<CommandHandler> g_cmd_handler;
-                    std::string response = g_cmd_handler->execute(args);
-                    conn->sendResponse(response);
-
-                    // 临时：清空整个缓冲区（阶段三仍用此简化方案）
-                    conn->consumeInput(conn->getReadBuffer().size());
-                } else if (result == RespParser::ParseResult::ERROR) {
-                    conn->sendResponse(RespParser::encodeError("protocol error"));
-                    conn->consumeInput(conn->getReadBuffer().size()); // 清空
+                if (event_flags & EPOLLERR) {
+                    std::cout << "[INFO] Client error, fd=" << fd << std::endl;
+                    close_client(fd);
+                    continue;
                 }
-                // INCOMPLETE: 等待更多数据
 
-                // 5. 尝试发送响应
-                if (!conn->writeToSocket()) {
+                if (!conn->peerReadClosed() &&
+                    (event_flags & (EPOLLIN | EPOLLRDHUP | EPOLLHUP))) {
+                    if (!conn->readFromSocket()) {
+                        std::cout << "[INFO] Client read failed, fd=" << fd << std::endl;
+                        close_client(fd);
+                        continue;
+                    }
+                    process_client_input(*conn);
+                }
+
+                if ((event_flags & EPOLLOUT) || conn->hasPendingWrite()) {
+                    if (!conn->writeToSocket()) {
+                        std::cout << "[INFO] Failed to write to client, closing fd=" << fd << std::endl;
+                        close_client(fd);
+                        continue;
+                    }
+                }
+
+                if (conn->peerReadClosed() && !conn->hasPendingWrite()) {
+                    std::cout << "[INFO] Client disconnected, fd=" << fd << std::endl;
+                    close_client(fd);
+                    continue;
+                }
+
+                if (!update_client_events(fd, *conn)) {
                     std::cout << "[INFO] Failed to write to client, closing fd=" << fd << std::endl;
-                    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
-                    connections_.erase(it);
+                    close_client(fd);
                 }
             }
         }

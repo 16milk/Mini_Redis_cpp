@@ -31,34 +31,47 @@ void Database::set(const std::string& key, const std::string& value) {
 
 bool Database::get(const std::string& key, std::string& out_value) const {
     auto obj = lookupKey(key);
-    if (!obj || obj->type() != ObjectType::STRING) {
+    if (!obj) {
         return false;
     }
-    out_value = static_cast<StringObject*>(obj.get())->value();
+    if (obj->type() != ObjectType::STRING) {
+        throw std::runtime_error("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+    out_value = static_cast<const StringObject*>(obj.get())->value();
     return true;
 }
 
-void Database::hset(const std::string& key, const std::string& field, const std::string& value) {
+size_t Database::hset(
+    const std::string& key,
+    const std::vector<std::pair<std::string, std::string>>& field_values) {
     auto obj = lookupKey(key);
+    std::shared_ptr<HashObject> hash;
     if (!obj) {
-        // key 不存在，创建新 Hash
-        auto hash_obj = std::make_shared<HashObject>();
-        hash_obj->set_field(field, value);
-        storeKey(key, hash_obj);
+        hash = std::make_shared<HashObject>();
+        storeKey(key, hash);
     } else {
         if (obj->type() != ObjectType::HASH) {
             throw std::runtime_error("WRONGTYPE Operation against a key holding the wrong kind of value");
         }
-        static_cast<HashObject*>(obj.get())->set_field(field, value);
+        hash = std::static_pointer_cast<HashObject>(obj);
     }
+
+    size_t added = 0;
+    for (const auto& [field, value] : field_values) {
+        added += hash->set_field(field, value) ? 1 : 0;
+    }
+    return added;
 }
 
 bool Database::hget(const std::string& key, const std::string& field, std::string& out_value) const {
     auto obj = lookupKey(key);
-    if (!obj || obj->type() != ObjectType::HASH) {
+    if (!obj) {
         return false;
     }
-    return static_cast<HashObject*>(obj.get())->get_field(field, out_value);
+    if (obj->type() != ObjectType::HASH) {
+        throw std::runtime_error("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+    return static_cast<const HashObject*>(obj.get())->get_field(field, out_value);
 }
 
 size_t Database::lpush(const std::string& key, const std::vector<std::string>& values) {

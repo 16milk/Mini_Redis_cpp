@@ -14,6 +14,9 @@ public:
 private:
     void setup_listen_socket();
     void accept_client();
+    void close_client(int fd);
+    bool update_client_events(int fd, const Connection& connection);
+    void process_client_input(Connection& connection);
     int createListenSocket(int port);
 
     int port_;

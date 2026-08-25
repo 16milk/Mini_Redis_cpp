@@ -72,7 +72,7 @@ int main() {
     expect_equal(execute(commands, {"SET", "string", "value"}),
                  "+OK\r\n", "SET creates a string");
     expect_equal(execute(commands, {"SADD", "string", "member"}),
-                 "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+                 "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
                  "extended commands reject wrong key types");
 
     const std::string filename = "mini_redis_extended_types_test.rdb";

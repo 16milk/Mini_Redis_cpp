@@ -1,8 +1,8 @@
 #include "mini_redis/net/Connection.hpp"
 #include "mini_redis/net/utils.hpp"
+#include <sys/socket.h>
 #include <unistd.h>
 #include <cerrno>
-#include <cstring>
 
 Connection::Connection(int sockfd) : sockfd_(sockfd) {}
 
@@ -12,24 +12,26 @@ Connection::~Connection() {
 
 bool Connection::readFromSocket() {
     char buf[1024];
-    ssize_t n;
-    while ((n = read(sockfd_, buf, sizeof(buf))) > 0) {
-        read_buffer_.append(buf, n);
-    }
-    if (n == 0) {
-        // 对端关闭
-        closed_ = true;
-        return false;
-    }
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return true; // 正常，无更多数据
+    while (true) {
+        const ssize_t read_count = read(sockfd_, buf, sizeof(buf));
+        if (read_count > 0) {
+            read_buffer_.append(buf, static_cast<size_t>(read_count));
+            continue;
         }
-        // 其他错误
+        if (read_count == 0) {
+            // 对端关闭写方向；仍可能需要把已入队的响应写回。
+            peer_read_closed_ = true;
+            return true;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return true;
+        }
         closed_ = true;
         return false;
     }
-    return true;
 }
 
 void Connection::sendResponse(const std::string& resp) {
@@ -38,24 +40,28 @@ void Connection::sendResponse(const std::string& resp) {
 }
 
 bool Connection::writeToSocket() {
-    if (write_buffer_.empty()) return true;
+    while (!write_buffer_.empty()) {
+        int send_flags = 0;
+#ifdef MSG_NOSIGNAL
+        send_flags = MSG_NOSIGNAL;
+#endif
+        const ssize_t written = send(sockfd_, write_buffer_.data(), write_buffer_.size(), send_flags);
+        if (written > 0) {
+            write_buffer_.erase(0, static_cast<size_t>(written));
+            continue;
+        }
 
-    ssize_t n = write(sockfd_, write_buffer_.data(), write_buffer_.size());
-    if (n <= 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return true; // 下次再试
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
         }
         closed_ = true;
         return false;
     }
 
-    // 移除已发送部分
-    write_buffer_.erase(0, n);
     return true;
-}
-
-bool Connection::hasCompleteCommand() const {
-    return !read_buffer_.empty();
 }
 
 void Connection::consumeInput(size_t n) {

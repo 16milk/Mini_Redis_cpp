@@ -28,7 +28,8 @@ public:
     Dict(Dict&&) noexcept = default;
     Dict& operator=(Dict&&) noexcept = default;
 
-    void set_field(std::string key, std::string value);
+    // 返回 true 表示插入新 field，false 表示更新已有 field。
+    bool set_field(std::string key, std::string value);
     bool get_field(const std::string& key, std::string& out_value) const;
     bool del_field(const std::string& key);
     size_t size() const { return used_; }

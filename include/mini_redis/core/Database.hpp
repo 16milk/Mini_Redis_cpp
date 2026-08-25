@@ -21,7 +21,8 @@ public:
     bool get(const std::string& key, std::string& out_value) const;
 
     // --- Hash ---
-    void hset(const std::string& key, const std::string& field, const std::string& value);
+    size_t hset(const std::string& key,
+                const std::vector<std::pair<std::string, std::string>>& field_values);
     bool hget(const std::string& key, const std::string& field, std::string& out_value) const;
 
     // --- List ---

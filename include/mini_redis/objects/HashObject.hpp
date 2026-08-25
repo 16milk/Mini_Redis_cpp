@@ -24,7 +24,8 @@ public:
     ObjectType type() const override { return ObjectType::HASH; }
     size_t memory_usage() const override;
 
-    void set_field(std::string field, std::string value);
+    // 返回 true 表示插入新 field，false 表示更新已有 field。
+    bool set_field(std::string field, std::string value);
     bool get_field(const std::string& field, std::string& out_value) const;
     bool del_field(const std::string& field); // 可选：HDEL
     size_t size() const;
