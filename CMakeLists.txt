@@ -86,6 +86,12 @@ if(BUILD_TESTING)
     target_link_libraries(mini_redis_rdb_round_trip_test PRIVATE mini_redis_core)
     add_test(NAME rdb_round_trip COMMAND mini_redis_rdb_round_trip_test)
 
+    add_executable(mini_redis_rdb_compatibility_test
+        tests/RdbCompatibilityTest.cpp
+    )
+    target_link_libraries(mini_redis_rdb_compatibility_test PRIVATE mini_redis_core)
+    add_test(NAME rdb_compatibility COMMAND mini_redis_rdb_compatibility_test)
+
     add_executable(mini_redis_multi_client_io_test
         tests/MultiClientIoTest.cpp
         src/net/Connection.cpp
