@@ -1,0 +1,24 @@
+# CMake and compiler outputs
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/CTestTestfile.cmake
+/Testing/
+
+# Compiled binaries and object/dependency files
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+*.d
+
+# Runtime data and local editor/OS files
+dump.rdb
+*.rdb
+.DS_Store
+
+# Local test binaries
+mini_redis_*_test
