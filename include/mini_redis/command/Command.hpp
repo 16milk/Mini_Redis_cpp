@@ -20,6 +20,9 @@ private:
     std::string handlePing(const std::vector<std::string>& args);
     std::string handleSet(const std::vector<std::string>& args);
     std::string handleGet(const std::vector<std::string>& args);
+    std::string handleExpire(const std::vector<std::string>& args, bool milliseconds);
+    std::string handleTtl(const std::vector<std::string>& args, bool milliseconds);
+    std::string handlePersist(const std::vector<std::string>& args);
 
     std::string handleHSet(const std::vector<std::string>& args);
     std::string handleHGet(const std::vector<std::string>& args);

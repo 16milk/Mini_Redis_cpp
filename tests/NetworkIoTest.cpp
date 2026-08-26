@@ -158,11 +158,50 @@ void test_partial_write_is_retained_until_drained() {
     close(sockets[1]);
 }
 
+void test_bounded_read_and_write() {
+    int sockets[2];
+    expect(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "socketpair creation");
+    set_nonblocking(sockets[0]);
+    set_nonblocking(sockets[1]);
+
+    Connection connection(sockets[0]);
+    const std::string input(8 * 1024, 'i');
+    write_all(sockets[1], input);
+    const auto first_read = connection.readFromSocket(4096, 1);
+    expect(first_read.ok && first_read.bytes_read == 4096 &&
+               first_read.read_calls == 1 && first_read.budget_exhausted,
+           "bounded read stops at its byte and syscall budget");
+    expect(connection.pendingInputBytes() == 4096,
+           "bounded read retains exactly the admitted input");
+    connection.discardInput();
+
+    const std::string output(32 * 1024, 'o');
+    const std::string tail = "tail";
+    connection.sendResponse(output);
+    expect(connection.writeToSocket(4096, 1), "bounded write succeeds");
+    expect(connection.hasPendingWrite(), "bounded write leaves output queued");
+    connection.sendResponse(tail);
+
+    std::string received;
+    drain_nonblocking(sockets[1], received);
+    expect(received.size() <= 4096, "bounded write does not exceed byte budget");
+    for (size_t attempts = 0; connection.hasPendingWrite() && attempts < 1000; ++attempts) {
+        expect(connection.writeToSocket(4096, 1), "resume bounded write");
+        drain_nonblocking(sockets[1], received);
+    }
+    expect(!connection.hasPendingWrite(), "bounded output eventually drains");
+    expect(received == output + tail,
+           "write offset preserves old and newly appended output bytes");
+
+    close(sockets[1]);
+}
+
 } // namespace
 
 int main() {
     test_pipelined_requests_and_fragmented_input();
     test_partial_write_is_retained_until_drained();
+    test_bounded_read_and_write();
     std::cout << "network I/O tests passed" << std::endl;
     return EXIT_SUCCESS;
 }

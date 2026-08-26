@@ -1,34 +1,35 @@
-// main.cpp（更新）
-#include "mini_redis/command/Command.hpp"
 #include "mini_redis/core/Database.hpp"
 #include "mini_redis/net/Server.hpp"
-#include <iostream>
+
 #include <csignal>
-#include <memory>
+#include <cstdlib>
+#include <iostream>
 
-// 全局单例（阶段三简单起见，后续可注入）
-Database g_db;
-std::unique_ptr<CommandHandler> g_cmd_handler;
+namespace {
 
-static volatile sig_atomic_t shutdown_flag = 0;
+volatile std::sig_atomic_t shutdown_flag = 0;
 
-void signal_handler(int sig) {
-    std::cout << "\n[INFO] Received signal " << sig << ", shutting down..." << std::endl;
+void signal_handler(int) {
+    // Assignment to sig_atomic_t is the only operation performed in signal
+    // context. Persistence and logging happen after the event loop returns.
     shutdown_flag = 1;
-    g_db.saveRdb();
-    exit(EXIT_SUCCESS);
 }
+
+} // namespace
 
 int main() {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // 初始化命令处理器
-    g_cmd_handler = std::make_unique<CommandHandler>(g_db);
-
     try {
-        Server server(6379);
+        Database database;
+        Server server(database, 6379, &shutdown_flag);
         server.run();
+
+        if (!database.saveRdb()) {
+            std::cerr << "[WARN] Failed to save database during shutdown" << std::endl;
+            return EXIT_FAILURE;
+        }
     } catch (const std::exception& e) {
         std::cerr << "[FATAL] Exception: " << e.what() << std::endl;
         return EXIT_FAILURE;

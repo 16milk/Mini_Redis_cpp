@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <ctime>
 #include <fcntl.h>
 #include <iostream>
 #include <string>
@@ -28,9 +27,11 @@ constexpr uint8_t kListQuicklist2 = 18;
 constexpr uint8_t kAux = 250;
 constexpr uint8_t kResizeDb = 251;
 constexpr uint8_t kExpireTimeMs = 252;
+constexpr uint8_t kExpireTime = 253;
 constexpr uint8_t kSelectDb = 254;
 constexpr uint8_t kEof = 255;
 constexpr uint64_t kCrc64Poly = UINT64_C(0xad93d23594c935a9);
+constexpr UnixMillis kLoadNowMs = 1'700'000'000'000;
 
 void fail(const std::string& message) {
     std::cerr << "FAILED: " << message << std::endl;
@@ -214,8 +215,8 @@ void testOfficialStyleInput() {
     bytes.push_back(kSelectDb);
     appendLen(bytes, 0);
     bytes.push_back(kResizeDb);
-    appendLen(bytes, 6);
-    appendLen(bytes, 1);
+    appendLen(bytes, 9);
+    appendLen(bytes, 3);
 
     bytes.push_back(kString);
     appendString(bytes, "encoded-int");
@@ -255,24 +256,51 @@ void testOfficialStyleInput() {
     appendString(bytes, std::string(reinterpret_cast<const char*>(listpack.data()), listpack.size()));
 
     bytes.push_back(kExpireTimeMs);
-    appendLe64(bytes, static_cast<uint64_t>(std::time(nullptr) - 60) * 1000);
+    appendLe64(bytes, static_cast<uint64_t>(kLoadNowMs));
     bytes.push_back(kString);
     appendString(bytes, "expired");
     appendString(bytes, "gone");
 
+    const UnixMillis future_ms_deadline = kLoadNowMs + 12'345;
+    bytes.push_back(kExpireTimeMs);
+    appendLe64(bytes, static_cast<uint64_t>(future_ms_deadline));
+    bytes.push_back(kString);
+    appendString(bytes, "future-ms");
+    appendString(bytes, "milliseconds");
+
+    const UnixMillis future_seconds_deadline = kLoadNowMs + 60'000;
+    bytes.push_back(kExpireTime);
+    appendLe32(bytes, static_cast<uint32_t>(future_seconds_deadline / 1000));
+    bytes.push_back(kString);
+    appendString(bytes, "future-seconds");
+    appendString(bytes, "seconds");
+
     finishRdb(bytes);
     const std::string filename = uniqueFilename("_official.rdb");
     writeFile(filename, bytes);
-    const auto loaded = RdbEncoder::loadFromFile(filename);
+    const RdbLoadResult loaded = RdbEncoder::loadFromFile(filename, kLoadNowMs);
     std::remove(filename.c_str());
 
-    expect(loaded.size() == 6, "expired official key is skipped");
-    const auto* integer = static_cast<const StringObject*>(loaded.at("encoded-int").get());
-    const auto* lzf = static_cast<const StringObject*>(loaded.at("lzf").get());
-    const auto* large = static_cast<const StringObject*>(loaded.at("large").get());
-    const auto* scores = static_cast<const ZSetObject*>(loaded.at("scores").get());
-    const auto* integers = static_cast<const SetObject*>(loaded.at("integers").get());
-    const auto* quicklist = static_cast<const ListObject*>(loaded.at("quicklist").get());
+    expect(loaded.objects.size() == 8, "expired official key is skipped");
+    expect(loaded.objects.count("expired") == 0,
+           "deadline-equal official key is skipped");
+    expect(loaded.expires.size() == 2, "future official deadlines are preserved");
+    expect(loaded.expires.at("future-ms") == future_ms_deadline,
+           "official millisecond deadline is preserved exactly");
+    expect(loaded.expires.at("future-seconds") == future_seconds_deadline,
+           "official second deadline is converted to milliseconds");
+    const auto* integer =
+        static_cast<const StringObject*>(loaded.objects.at("encoded-int").get());
+    const auto* lzf = static_cast<const StringObject*>(loaded.objects.at("lzf").get());
+    const auto* large = static_cast<const StringObject*>(loaded.objects.at("large").get());
+    const auto* scores = static_cast<const ZSetObject*>(loaded.objects.at("scores").get());
+    const auto* integers = static_cast<const SetObject*>(loaded.objects.at("integers").get());
+    const auto* quicklist =
+        static_cast<const ListObject*>(loaded.objects.at("quicklist").get());
+    const auto* future_ms =
+        static_cast<const StringObject*>(loaded.objects.at("future-ms").get());
+    const auto* future_seconds =
+        static_cast<const StringObject*>(loaded.objects.at("future-seconds").get());
     expect(integer->value() == "42", "official integer-encoded string loads");
     expect(lzf->value() == "compressed", "official LZF string loads");
     expect(large->value().size() == 20000, "32-bit RDB string length loads");
@@ -283,6 +311,10 @@ void testOfficialStyleInput() {
            "official intset encoding loads");
     expect(quicklist->values() == std::vector<std::string>({"one", "two"}),
            "official QuickList2 listpack loads");
+    expect(future_ms->value() == "milliseconds",
+           "future millisecond-expiring object loads");
+    expect(future_seconds->value() == "seconds",
+           "future second-expiring object loads");
 }
 
 void testChecksumAndAtomicSave() {
@@ -329,11 +361,30 @@ void testChecksumAndAtomicSave() {
     std::remove(filename.c_str());
 }
 
+void testMalformedExpirationMetadata() {
+    std::vector<uint8_t> bytes({'R', 'E', 'D', 'I', 'S', '0', '0', '0', '9'});
+    bytes.push_back(kSelectDb);
+    appendLen(bytes, 0);
+    bytes.push_back(kExpireTimeMs);
+    appendLe64(bytes, static_cast<uint64_t>(kLoadNowMs + 1'000));
+    finishRdb(bytes);
+
+    const std::string filename = uniqueFilename("_dangling_expire.rdb");
+    writeFile(filename, bytes);
+    const RdbLoadResult loaded = RdbEncoder::loadFromFile(filename, kLoadNowMs);
+    std::remove(filename.c_str());
+    expect(loaded.objects.empty() && loaded.expires.empty(),
+           "dangling expiration metadata is rejected");
+    expect(RdbEncoder::lastError().find("metadata") != std::string::npos,
+           "dangling expiration exposes a diagnostic");
+}
+
 } // namespace
 
 int main() {
     testOfficialStyleInput();
     testChecksumAndAtomicSave();
+    testMalformedExpirationMetadata();
 
     // Opt-in external validation for environments that provide the official checker.
     const char* external_checker = std::getenv("REDIS_CHECK_RDB");

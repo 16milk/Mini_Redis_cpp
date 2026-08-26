@@ -74,6 +74,12 @@ if(BUILD_TESTING)
     target_link_libraries(mini_redis_command_semantics_test PRIVATE mini_redis_core)
     add_test(NAME command_semantics COMMAND mini_redis_command_semantics_test)
 
+    add_executable(mini_redis_expiration_test
+        tests/ExpirationTest.cpp
+    )
+    target_link_libraries(mini_redis_expiration_test PRIVATE mini_redis_core)
+    add_test(NAME expiration COMMAND mini_redis_expiration_test)
+
     add_executable(mini_redis_hash_encoding_test
         tests/HashEncodingTest.cpp
     )

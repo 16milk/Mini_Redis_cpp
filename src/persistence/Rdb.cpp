@@ -7,19 +7,20 @@
 #include "mini_redis/objects/ZSetObject.hpp"
 
 #include <array>
+#include <chrono>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <ctime>
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <sys/stat.h>
+#include <unordered_set>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -113,6 +114,30 @@ void appendLe64(std::vector<uint8_t>& output, uint64_t value) {
     for (size_t index = 0; index < 8; ++index) {
         output.push_back(static_cast<uint8_t>(value >> (index * 8)));
     }
+}
+
+UnixMillis currentUnixMillis() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+UnixMillis checkedExpireMilliseconds(uint64_t value) {
+    if (value > static_cast<uint64_t>(std::numeric_limits<UnixMillis>::max())) {
+        throw std::overflow_error("RDB millisecond expiration exceeds UnixMillis range");
+    }
+    return static_cast<UnixMillis>(value);
+}
+
+UnixMillis checkedExpireSeconds(uint32_t value) {
+    constexpr uint64_t MILLIS_PER_SECOND = 1000;
+    if (static_cast<uint64_t>(value) >
+        static_cast<uint64_t>(std::numeric_limits<UnixMillis>::max()) /
+            MILLIS_PER_SECOND) {
+        throw std::overflow_error("RDB second expiration overflows UnixMillis");
+    }
+    return static_cast<UnixMillis>(value) *
+           static_cast<UnixMillis>(MILLIS_PER_SECOND);
 }
 
 uint64_t crc64(const uint8_t* data, size_t length) {
@@ -916,9 +941,39 @@ const std::string& RdbEncoder::lastError() {
 
 bool RdbEncoder::saveToFile(
     const std::string& filename,
-    const std::unordered_map<std::string, std::shared_ptr<RedisObject>>& data) {
+    const ObjectMap& objects,
+    const ExpireMap& expires,
+    UnixMillis snapshot_now_ms) {
     g_last_error.clear();
     try {
+        for (const auto& [key, deadline_ms] : expires) {
+            (void)deadline_ms;
+            if (objects.count(key) == 0) {
+                throw std::runtime_error(
+                    "expiration metadata references missing key '" + key + "'");
+            }
+        }
+
+        size_t live_object_count = 0;
+        size_t live_expire_count = 0;
+        for (const auto& [key, object] : objects) {
+            if (!object) {
+                throw std::runtime_error("cannot save null object for key '" + key + "'");
+            }
+            const auto expire_it = expires.find(key);
+            if (expire_it != expires.end() && expire_it->second < 0) {
+                throw std::runtime_error(
+                    "cannot encode negative expiration for key '" + key + "'");
+            }
+            if (expire_it != expires.end() && expire_it->second <= snapshot_now_ms) {
+                continue;
+            }
+            ++live_object_count;
+            if (expire_it != expires.end()) {
+                ++live_expire_count;
+            }
+        }
+
         BufferWriter writer;
         writer.writeRaw("REDIS0009", 9);
         writer.writeByte(RDB_OPCODE_AUX);
@@ -927,10 +982,18 @@ bool RdbEncoder::saveToFile(
         writer.writeByte(RDB_OPCODE_SELECTDB);
         writer.writeLen(0);
         writer.writeByte(RDB_OPCODE_RESIZEDB);
-        writer.writeLen(data.size());
-        writer.writeLen(0);
+        writer.writeLen(live_object_count);
+        writer.writeLen(live_expire_count);
 
-        for (const auto& [key, object] : data) {
+        for (const auto& [key, object] : objects) {
+            const auto expire_it = expires.find(key);
+            if (expire_it != expires.end() && expire_it->second <= snapshot_now_ms) {
+                continue;
+            }
+            if (expire_it != expires.end()) {
+                writer.writeByte(RDB_OPCODE_EXPIRETIME_MS);
+                appendLe64(writer.bytes(), static_cast<uint64_t>(expire_it->second));
+            }
             writeObject(writer, key, *object);
         }
 
@@ -944,23 +1007,32 @@ bool RdbEncoder::saveToFile(
     }
 }
 
-std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbEncoder::loadFromFile(
-    const std::string& filename) {
+bool RdbEncoder::saveToFile(const std::string& filename, const ObjectMap& objects) {
+    return saveToFile(filename, objects, {}, currentUnixMillis());
+}
+
+RdbLoadResult RdbEncoder::loadFromFile(
+    const std::string& filename,
+    UnixMillis load_now_ms) {
     g_last_error.clear();
     if (access(filename.c_str(), F_OK) == -1 && errno == ENOENT) {
         return {};
     }
     try {
-        return RdbDecoder(filename).decodeAll();
+        return RdbDecoder(filename).decodeAll(load_now_ms);
     } catch (const std::exception& exception) {
         logError(std::string("cannot load RDB '") + filename + "': " + exception.what());
         return {};
     }
 }
 
+ObjectMap RdbEncoder::loadFromFile(const std::string& filename) {
+    return loadFromFile(filename, currentUnixMillis()).objects;
+}
+
 RdbDecoder::RdbDecoder(std::string filename) : filename_(std::move(filename)) {}
 
-std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbDecoder::decodeAll() {
+RdbLoadResult RdbDecoder::decodeAll(UnixMillis load_now_ms) {
     BufferReader reader(readFile(filename_));
     if (reader.size() < 10) {
         throw std::runtime_error("RDB file is too short");
@@ -992,46 +1064,81 @@ std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbDecoder::decode
         }
     }
 
-    std::unordered_map<std::string, std::shared_ptr<RedisObject>> data;
+    RdbLoadResult result;
+    std::unordered_set<std::string> seen_keys;
     uint64_t selected_db = 0;
-    int64_t pending_expire_at_ms = -1;
+    UnixMillis pending_expire_at_ms = 0;
+    bool has_pending_expire = false;
+    bool has_pending_idle = false;
+    bool has_pending_freq = false;
     bool saw_eof = false;
     while (reader.position() < payload_end) {
         const uint8_t type = reader.readByte();
         if (type == RDB_OPCODE_EOF) {
+            if (has_pending_expire || has_pending_idle || has_pending_freq) {
+                throw std::runtime_error("RDB key metadata has no following object");
+            }
             saw_eof = true;
             break;
         }
         if (type == RDB_OPCODE_AUX) {
+            if (has_pending_expire || has_pending_idle || has_pending_freq) {
+                throw std::runtime_error(
+                    "RDB key metadata must be followed by an object");
+            }
             (void)reader.readString();
             (void)reader.readString();
             continue;
         }
         if (type == RDB_OPCODE_SELECTDB) {
+            if (has_pending_expire || has_pending_idle || has_pending_freq) {
+                throw std::runtime_error(
+                    "RDB key metadata must be followed by an object");
+            }
             selected_db = reader.readPlainLen();
             continue;
         }
         if (type == RDB_OPCODE_RESIZEDB) {
+            if (has_pending_expire || has_pending_idle || has_pending_freq) {
+                throw std::runtime_error(
+                    "RDB key metadata must be followed by an object");
+            }
             (void)reader.readPlainLen();
             (void)reader.readPlainLen();
             continue;
         }
         if (type == RDB_OPCODE_EXPIRETIME) {
+            if (has_pending_expire) {
+                throw std::runtime_error("duplicate RDB expiration metadata for one object");
+            }
             const auto raw = reader.readRaw(4);
-            pending_expire_at_ms = static_cast<int64_t>(readLe32(raw.data())) * 1000;
+            pending_expire_at_ms = checkedExpireSeconds(readLe32(raw.data()));
+            has_pending_expire = true;
             continue;
         }
         if (type == RDB_OPCODE_EXPIRETIME_MS) {
+            if (has_pending_expire) {
+                throw std::runtime_error("duplicate RDB expiration metadata for one object");
+            }
             const auto raw = reader.readRaw(8);
-            pending_expire_at_ms = static_cast<int64_t>(readLe64(raw.data()));
+            pending_expire_at_ms = checkedExpireMilliseconds(readLe64(raw.data()));
+            has_pending_expire = true;
             continue;
         }
         if (type == RDB_OPCODE_IDLE) {
+            if (has_pending_idle) {
+                throw std::runtime_error("duplicate RDB idle metadata for one object");
+            }
             (void)reader.readPlainLen();
+            has_pending_idle = true;
             continue;
         }
         if (type == RDB_OPCODE_FREQ) {
+            if (has_pending_freq) {
+                throw std::runtime_error("duplicate RDB frequency metadata for one object");
+            }
             reader.skip(1);
+            has_pending_freq = true;
             continue;
         }
 
@@ -1039,6 +1146,9 @@ std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbDecoder::decode
         if (selected_db != 0) {
             throw std::runtime_error("RDB contains unsupported database " +
                                      std::to_string(selected_db));
+        }
+        if (!seen_keys.emplace(key).second) {
+            throw std::runtime_error("duplicate key in RDB: '" + key + "'");
         }
 
         std::shared_ptr<RedisObject> object;
@@ -1048,7 +1158,7 @@ std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbDecoder::decode
                    type == RDB_TYPE_ZSET_LISTPACK || type == RDB_TYPE_HASH_LISTPACK ||
                    type == RDB_TYPE_LIST_ZIPLIST || type == RDB_TYPE_ZSET_ZIPLIST ||
                    type == RDB_TYPE_HASH_ZIPLIST) {
-            std::unordered_map<std::string, std::shared_ptr<RedisObject>> decoded;
+            ObjectMap decoded;
             loadEncodedObject(reader, type, key, decoded);
             object = std::move(decoded.at(key));
         } else if (type == RDB_TYPE_LIST_QUICKLIST || type == RDB_TYPE_LIST_QUICKLIST_2) {
@@ -1057,15 +1167,23 @@ std::unordered_map<std::string, std::shared_ptr<RedisObject>> RdbDecoder::decode
             throw std::runtime_error("unsupported RDB object type " + std::to_string(type));
         }
 
-        const auto now_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
-        if (pending_expire_at_ms < 0 || pending_expire_at_ms > now_ms) {
-            data[key] = std::move(object);
+        if (!has_pending_expire || pending_expire_at_ms > load_now_ms) {
+            result.objects.emplace(key, std::move(object));
+            if (has_pending_expire) {
+                result.expires.emplace(key, pending_expire_at_ms);
+            }
         }
-        pending_expire_at_ms = -1;
+        has_pending_expire = false;
+        has_pending_idle = false;
+        has_pending_freq = false;
     }
 
     if (!saw_eof || reader.position() != payload_end) {
         throw std::runtime_error("RDB EOF marker is missing or trailing data is malformed");
     }
-    return data;
+    return result;
+}
+
+ObjectMap RdbDecoder::decodeAll() {
+    return decodeAll(currentUnixMillis()).objects;
 }

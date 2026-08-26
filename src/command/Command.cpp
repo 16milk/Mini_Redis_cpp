@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -20,6 +21,43 @@ bool parseInteger(const std::string& value, long long& out) {
     const long long parsed = std::strtoll(value.c_str(), &end, 10);
     if (errno == ERANGE || end != value.c_str() + value.size()) return false;
     out = parsed;
+    return true;
+}
+
+bool parseExpiration(const std::string& value, UnixMillis& out) {
+    if (value.empty()) return false;
+
+    std::size_t digit_index = 0;
+    if (value.front() == '-') {
+        digit_index = 1;
+    }
+    if (digit_index == value.size()) return false;
+    if (value[digit_index] == '0' && value.size() - digit_index != 1) return false;
+    if (digit_index == 1 && value[digit_index] == '0') return false;
+    for (; digit_index < value.size(); ++digit_index) {
+        const unsigned char character = static_cast<unsigned char>(value[digit_index]);
+        if (!std::isdigit(character)) return false;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    const long long parsed = std::strtoll(value.c_str(), &end, 10);
+    if (errno == ERANGE || end != value.c_str() + value.size() ||
+        parsed < std::numeric_limits<UnixMillis>::min() ||
+        parsed > std::numeric_limits<UnixMillis>::max()) {
+        return false;
+    }
+    out = static_cast<UnixMillis>(parsed);
+    return true;
+}
+
+bool secondsToMilliseconds(UnixMillis seconds, UnixMillis& milliseconds) {
+    constexpr UnixMillis kMillisecondsPerSecond = 1000;
+    if (seconds > std::numeric_limits<UnixMillis>::max() / kMillisecondsPerSecond ||
+        seconds < std::numeric_limits<UnixMillis>::min() / kMillisecondsPerSecond) {
+        return false;
+    }
+    milliseconds = seconds * kMillisecondsPerSecond;
     return true;
 }
 
@@ -73,6 +111,16 @@ std::string CommandHandler::execute(const std::vector<std::string>& args) {
         return handleSet(args);
     } else if (cmd == "GET") {
         return handleGet(args);
+    } else if (cmd == "EXPIRE") {
+        return handleExpire(args, false);
+    } else if (cmd == "PEXPIRE") {
+        return handleExpire(args, true);
+    } else if (cmd == "TTL") {
+        return handleTtl(args, false);
+    } else if (cmd == "PTTL") {
+        return handleTtl(args, true);
+    } else if (cmd == "PERSIST") {
+        return handlePersist(args);
     } else if (cmd == "HSET") {
         return handleHSet(args);
     } else if (cmd == "HGET") {
@@ -143,10 +191,42 @@ std::string CommandHandler::handlePing(const std::vector<std::string>& args) {
 }
 
 std::string CommandHandler::handleSet(const std::vector<std::string>& args) {
-    if (args.size() != 3) {
+    if (args.size() < 3) {
         return RespParser::encodeError("wrong number of arguments for 'SET'");
     }
-    db_.set(args[1], args[2]);
+    if (args.size() == 3) {
+        db_.set(args[1], args[2]);
+        return RespParser::encodeSimpleString("OK");
+    }
+    if (args.size() != 5) {
+        return RespParser::encodeError("syntax error");
+    }
+
+    const std::string option = toUpper(args[3]);
+    if (option != "EX" && option != "PX") {
+        return RespParser::encodeError("syntax error");
+    }
+
+    UnixMillis timeout;
+    if (!parseExpiration(args[4], timeout)) {
+        return RespParser::encodeError("value is not an integer or out of range");
+    }
+    if (timeout <= 0) {
+        return RespParser::encodeError("invalid expire time in 'set' command");
+    }
+
+    UnixMillis ttl_ms = timeout;
+    if (option == "EX" && !secondsToMilliseconds(timeout, ttl_ms)) {
+        return RespParser::encodeError("invalid expire time in 'set' command");
+    }
+
+    try {
+        db_.set(args[1], args[2], ttl_ms);
+    } catch (const std::invalid_argument&) {
+        return RespParser::encodeError("invalid expire time in 'set' command");
+    } catch (const std::overflow_error&) {
+        return RespParser::encodeError("invalid expire time in 'set' command");
+    }
     return RespParser::encodeSimpleString("OK");
 }
 
@@ -159,6 +239,49 @@ std::string CommandHandler::handleGet(const std::vector<std::string>& args) {
         return db_.get(args[1], value) ? RespParser::encodeBulkString(value)
                                        : RespParser::encodeNullBulkString();
     } catch (const std::exception& exception) { return typeError(exception); }
+}
+
+std::string CommandHandler::handleExpire(const std::vector<std::string>& args,
+                                         bool milliseconds) {
+    const std::string command = milliseconds ? "PEXPIRE" : "EXPIRE";
+    const std::string error_command = milliseconds ? "pexpire" : "expire";
+    if (args.size() != 3) {
+        return RespParser::encodeError("wrong number of arguments for '" + command + "'");
+    }
+
+    UnixMillis timeout;
+    if (!parseExpiration(args[2], timeout)) {
+        return RespParser::encodeError("value is not an integer or out of range");
+    }
+
+    UnixMillis ttl_ms = timeout;
+    if (!milliseconds && !secondsToMilliseconds(timeout, ttl_ms)) {
+        return RespParser::encodeError(
+            "invalid expire time in '" + error_command + "' command");
+    }
+
+    try {
+        return RespParser::encodeInteger(db_.expire(args[1], ttl_ms) ? 1 : 0);
+    } catch (const std::overflow_error&) {
+        return RespParser::encodeError(
+            "invalid expire time in '" + error_command + "' command");
+    }
+}
+
+std::string CommandHandler::handleTtl(const std::vector<std::string>& args,
+                                      bool milliseconds) {
+    const std::string command = milliseconds ? "PTTL" : "TTL";
+    if (args.size() != 2) {
+        return RespParser::encodeError("wrong number of arguments for '" + command + "'");
+    }
+    return RespParser::encodeInteger(db_.ttl(args[1], milliseconds));
+}
+
+std::string CommandHandler::handlePersist(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        return RespParser::encodeError("wrong number of arguments for 'PERSIST'");
+    }
+    return RespParser::encodeInteger(db_.persist(args[1]) ? 1 : 0);
 }
 
 std::string CommandHandler::handleHSet(const std::vector<std::string>& args) {
