@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mini_redis/cluster/ClientSession.hpp"
+
 #include <cstddef>
 #include <string>
 
@@ -52,6 +54,10 @@ public:
     bool shouldClose() const { return closed_; }
     bool peerReadClosed() const { return peer_read_closed_; }
 
+    // 连接级路由状态（请求序号、一次性 ASKING）。随连接销毁而消失。
+    cluster::ClientSession& session() { return session_; }
+    const cluster::ClientSession& session() const { return session_; }
+
 private:
     int sockfd_;
     std::string read_buffer_;
@@ -59,4 +65,5 @@ private:
     std::size_t write_offset_ = 0;
     bool closed_ = false;
     bool peer_read_closed_ = false;
+    cluster::ClientSession session_;
 };

@@ -1,5 +1,7 @@
 // Command.cpp
 #include "mini_redis/command/Command.hpp"
+#include "mini_redis/cluster/Router.hpp"
+#include "mini_redis/command/CommandSpec.hpp"
 #include "mini_redis/core/Database.hpp"
 #include "mini_redis/objects/ZSetObject.hpp"
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -90,6 +93,35 @@ std::string typeError(const std::exception& exception) {
     return RespParser::encodeWrongTypeError();
 }
 
+// ASKING 是一次性标志：无论紧随其后的那条命令成功、失败还是没有 key，
+// 都必须把它消费掉。标志绑定在请求序号上，所以 ASKING 自身不会清除
+// 它刚刚为下一个序号设置的状态。
+class AskingConsumer {
+public:
+    AskingConsumer(cluster::ClientSession& session, std::uint64_t request_seq)
+        : session_(session), request_seq_(request_seq) {}
+    ~AskingConsumer() {
+        if (session_.askingFor(request_seq_)) {
+            session_.clearAsking();
+        }
+    }
+    AskingConsumer(const AskingConsumer&) = delete;
+    AskingConsumer& operator=(const AskingConsumer&) = delete;
+
+private:
+    cluster::ClientSession& session_;
+    std::uint64_t request_seq_;
+};
+
+// CLUSTER SLOTS 的 node tuple 固定为 [host, port, node-id]。
+std::string encodeClusterNode(const cluster::NodeRecord& node) {
+    std::vector<std::string> fields;
+    fields.push_back(RespParser::encodeBulkString(node.client.host));
+    fields.push_back(RespParser::encodeInteger(node.client.port));
+    fields.push_back(RespParser::encodeBulkString(node.id));
+    return RespParser::encodeArrayOfEncoded(fields);
+}
+
 } // namespace
 
 static std::string toUpper(std::string s) {
@@ -99,12 +131,75 @@ static std::string toUpper(std::string s) {
 }
 
 std::string CommandHandler::execute(const std::vector<std::string>& args) {
+    return execute(args, default_session_);
+}
+
+std::string CommandHandler::execute(const std::vector<std::string>& args,
+                                    cluster::ClientSession& session) {
+    const std::uint64_t request_seq = session.beginRequest();
+    const AskingConsumer asking_consumer(session, request_seq);
+
     if (args.empty()) {
         return RespParser::encodeError("empty command");
     }
 
-    std::string cmd = toUpper(args[0]);
+    const std::string cmd = toUpper(args[0]);
 
+    // 路由控制命令自身不参与 slot 路由，也不进入数据 Raft。
+    if (cmd == "ASKING") {
+        return handleAsking(args, session, request_seq);
+    }
+    if (cmd == "CLUSTER") {
+        return handleCluster(args);
+    }
+
+    if (router_ == nullptr) {
+        return dispatch(cmd, args);
+    }
+
+    const CommandSpec* spec = lookupCommandSpec(cmd);
+    if (spec == nullptr) {
+        return RespParser::encodeError("unknown command `" + args[0] + "`");
+    }
+
+    // 迁移窗口内需要知道 key 是否还在本地状态机，才能区分本地服务与 ASK。
+    const cluster::KeyPresenceProbe probe = [this](std::string_view key) {
+        return db_.keyExists(std::string(key));
+    };
+    const cluster::RouteDecision decision =
+        router_->route(*spec, args, session, request_seq, probe, db_.nowMs());
+    if (decision.action != cluster::RouteAction::kLocal) {
+        return encodeRedirect(decision);
+    }
+    return dispatch(cmd, args);
+}
+
+std::string CommandHandler::encodeRedirect(const cluster::RouteDecision& decision) {
+    switch (decision.action) {
+        case cluster::RouteAction::kMoved:
+            // 客户端应更新自己的 slot 缓存并重发到新地址。
+            return RespParser::encodeMovedError(decision.slot,
+                                                decision.endpoint.toRedirectTarget());
+        case cluster::RouteAction::kAsk:
+            // 一次性重定向：客户端先发 ASKING，再把同一条命令发往目标节点。
+            return RespParser::encodeAskError(decision.slot,
+                                              decision.endpoint.toRedirectTarget());
+        case cluster::RouteAction::kCrossSlot:
+            return RespParser::encodeCrossSlotError();
+        case cluster::RouteAction::kTryAgain:
+            return RespParser::encodeTryAgainError(decision.detail);
+        case cluster::RouteAction::kClusterDown:
+            return RespParser::encodeClusterDownError(decision.detail);
+        case cluster::RouteAction::kUnsupported:
+            return RespParser::encodeError(decision.detail);
+        case cluster::RouteAction::kLocal:
+            break;
+    }
+    return RespParser::encodeError("internal routing error");
+}
+
+std::string CommandHandler::dispatch(const std::string& cmd,
+                                     const std::vector<std::string>& args) {
     if (cmd == "PING") {
         return handlePing(args);
     } else if (cmd == "SET") {
@@ -540,4 +635,110 @@ std::string CommandHandler::handleSave(const std::vector<std::string>& args) {
     } else {
         return RespParser::encodeError("ERR Failed to save RDB");
     }
+}
+
+std::string CommandHandler::handleAsking(const std::vector<std::string>& args,
+                                         cluster::ClientSession& session,
+                                         std::uint64_t request_seq) {
+    if (args.size() != 1) {
+        return RespParser::encodeError("wrong number of arguments for 'ASKING'");
+    }
+    if (router_ == nullptr) {
+        return RespParser::encodeError("This instance has cluster support disabled");
+    }
+    // 只对紧随其后的那一个命令放行，且仅当目标节点确实处于 importing 状态。
+    session.markAskingForNextRequest(request_seq);
+    return RespParser::encodeSimpleString("OK");
+}
+
+std::string CommandHandler::handleCluster(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        return RespParser::encodeError("wrong number of arguments for 'CLUSTER'");
+    }
+    const std::string subcommand = toUpper(args[1]);
+
+    // KEYSLOT 是纯函数，单节点模式下也允许调用，便于校验分片规则。
+    if (subcommand == "KEYSLOT") {
+        if (args.size() != 3) {
+            return RespParser::encodeError("wrong number of arguments for 'CLUSTER KEYSLOT'");
+        }
+        return RespParser::encodeInteger(cluster::keyToSlot(args[2]));
+    }
+
+    if (router_ == nullptr) {
+        return RespParser::encodeError("This instance has cluster support disabled");
+    }
+
+    if (subcommand == "SLOTS") {
+        if (args.size() != 2) {
+            return RespParser::encodeError("wrong number of arguments for 'CLUSTER SLOTS'");
+        }
+        return handleClusterSlots();
+    }
+    if (subcommand == "INFO") {
+        if (args.size() != 2) {
+            return RespParser::encodeError("wrong number of arguments for 'CLUSTER INFO'");
+        }
+        return handleClusterInfo();
+    }
+    if (subcommand == "MYID") {
+        if (args.size() != 2) {
+            return RespParser::encodeError("wrong number of arguments for 'CLUSTER MYID'");
+        }
+        return RespParser::encodeBulkString(router_->selfId());
+    }
+    return RespParser::encodeError("Unknown CLUSTER subcommand '" + args[1] + "'");
+}
+
+std::string CommandHandler::handleClusterSlots() {
+    const cluster::ClusterSlotsView view = router_->clusterSlotsView(db_.nowMs());
+    if (!view.complete) {
+        // 宁可让客户端重试，也不返回一张会被缓存下来的错误路由表。
+        return RespParser::encodeTryAgainError(view.unavailable_reason);
+    }
+
+    std::vector<std::string> encoded_ranges;
+    encoded_ranges.reserve(view.ranges.size());
+    for (const cluster::SlotRangeView& entry : view.ranges) {
+        std::vector<std::string> tuple;
+        tuple.reserve(3 + entry.replicas.size());
+        tuple.push_back(RespParser::encodeInteger(entry.range.start));
+        tuple.push_back(RespParser::encodeInteger(entry.range.end));
+        // primary 必须是该 Raft group 当前已知的 leader，其余 voter 随后列出。
+        tuple.push_back(encodeClusterNode(entry.primary));
+        for (const cluster::NodeRecord& replica : entry.replicas) {
+            tuple.push_back(encodeClusterNode(replica));
+        }
+        encoded_ranges.push_back(RespParser::encodeArrayOfEncoded(tuple));
+    }
+    return RespParser::encodeArrayOfEncoded(encoded_ranges);
+}
+
+std::string CommandHandler::handleClusterInfo() {
+    const cluster::ClusterStatusView status = router_->statusView(db_.nowMs());
+
+    std::string local_shards;
+    for (const cluster::ShardId shard : status.local_shards) {
+        if (!local_shards.empty()) {
+            local_shards += ',';
+        }
+        local_shards += std::to_string(shard);
+    }
+
+    std::string info;
+    info += "cluster_enabled:1\r\n";
+    info += std::string("cluster_state:") + (status.state_ok ? "ok" : "fail") + "\r\n";
+    info += "cluster_slots_assigned:" + std::to_string(status.slots_assigned) + "\r\n";
+    info += "cluster_known_nodes:" + std::to_string(status.known_nodes) + "\r\n";
+    info += "cluster_size:" + std::to_string(status.shard_count) + "\r\n";
+    info += "cluster_current_epoch:" + std::to_string(status.config_epoch) + "\r\n";
+    info += "cluster_my_id:" + router_->selfId() + "\r\n";
+    // slot 只是路由单元：Raft group 数量等于分片数量，而不是 16384。
+    info += "cluster_slot_space:" + std::to_string(cluster::kSlotCount) + "\r\n";
+    info += "cluster_raft_groups:" + std::to_string(status.shard_count) + "\r\n";
+    info += "cluster_migrating_slots:" + std::to_string(status.migrating_slots) + "\r\n";
+    info += "cluster_my_shards:" + local_shards + "\r\n";
+    info += "cluster_my_leader_shards:" + std::to_string(status.local_leader_shards) +
+            "\r\n";
+    return RespParser::encodeBulkString(info);
 }

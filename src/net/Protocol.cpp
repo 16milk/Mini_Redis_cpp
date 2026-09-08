@@ -48,6 +48,18 @@ bool parseInteger(const std::string& input, size_t begin, size_t end, long long&
     return true;
 }
 
+// A simple error is terminated by the first CRLF, so an embedded newline would
+// split one reply into two frames.
+std::string sanitizeErrorMessage(const std::string& msg) {
+    std::string clean = msg;
+    for (char& character : clean) {
+        if (character == '\r' || character == '\n') {
+            character = ' ';
+        }
+    }
+    return clean;
+}
+
 } // namespace
 
 RespParser::ParseResult RespParser::parse(const std::string& input,
@@ -157,4 +169,44 @@ std::string RespParser::encodeArray(const std::vector<std::string>& values) {
         response += encodeBulkString(value);
     }
     return response;
+}
+
+std::string RespParser::encodeArrayOfEncoded(const std::vector<std::string>& encoded) {
+    std::string response = "*" + std::to_string(encoded.size()) + "\r\n";
+    for (const auto& element : encoded) {
+        response += element;
+    }
+    return response;
+}
+
+std::string RespParser::encodeTypedError(const std::string& code, const std::string& msg) {
+    std::string response = "-";
+    response += code;
+    if (!msg.empty()) {
+        response += ' ';
+        response += sanitizeErrorMessage(msg);
+    }
+    response += "\r\n";
+    return response;
+}
+
+std::string RespParser::encodeMovedError(int slot, const std::string& target) {
+    return encodeTypedError("MOVED", std::to_string(slot) + " " + target);
+}
+
+std::string RespParser::encodeAskError(int slot, const std::string& target) {
+    return encodeTypedError("ASK", std::to_string(slot) + " " + target);
+}
+
+std::string RespParser::encodeCrossSlotError() {
+    return encodeTypedError("CROSSSLOT",
+                            "Keys in request don't hash to the same slot");
+}
+
+std::string RespParser::encodeTryAgainError(const std::string& msg) {
+    return encodeTypedError("TRYAGAIN", msg);
+}
+
+std::string RespParser::encodeClusterDownError(const std::string& msg) {
+    return encodeTypedError("CLUSTERDOWN", msg);
 }

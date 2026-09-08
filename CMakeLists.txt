@@ -21,7 +21,17 @@ find_package(Threads REQUIRED)
 
 # 可由服务端和测试复用的核心实现
 set(CORE_SOURCES
+    src/cluster/ClusterConfig.cpp
+    src/cluster/Router.cpp
+    src/cluster/Slot.cpp
+    src/cluster/Topology.cpp
     src/command/Command.cpp
+    src/command/CommandSpec.cpp
+    src/consensus/MemoryStorage.cpp
+    src/consensus/MultiRaft.cpp
+    src/consensus/RaftCore.cpp
+    src/consensus/RaftLog.cpp
+    src/consensus/RaftTypes.cpp
     src/core/Database.cpp
     src/core/Dict.cpp
     src/core/RedisObject.cpp
@@ -104,6 +114,24 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_multi_client_io_test PRIVATE mini_redis_core)
     add_test(NAME multi_client_io COMMAND mini_redis_multi_client_io_test)
+
+    add_executable(mini_redis_cluster_slot_test
+        tests/ClusterSlotTest.cpp
+    )
+    target_link_libraries(mini_redis_cluster_slot_test PRIVATE mini_redis_core)
+    add_test(NAME cluster_slot COMMAND mini_redis_cluster_slot_test)
+
+    add_executable(mini_redis_cluster_routing_test
+        tests/ClusterRoutingTest.cpp
+    )
+    target_link_libraries(mini_redis_cluster_routing_test PRIVATE mini_redis_core)
+    add_test(NAME cluster_routing COMMAND mini_redis_cluster_routing_test)
+
+    add_executable(mini_redis_raft_core_test
+        tests/RaftCoreTest.cpp
+    )
+    target_link_libraries(mini_redis_raft_core_test PRIVATE mini_redis_core)
+    add_test(NAME raft_core COMMAND mini_redis_raft_core_test)
 endif()
 
 # （可选）设置输出目录

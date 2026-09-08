@@ -26,4 +26,16 @@ public:
     static std::string encodeInteger(long long n);
     static std::string encodeNullBulkString(); // "$-1\r\n"
     static std::string encodeArray(const std::vector<std::string>& values);
+
+    // 元素已经是完整 RESP 帧时使用，可构造 CLUSTER SLOTS 那样的混合类型嵌套数组。
+    static std::string encodeArrayOfEncoded(const std::vector<std::string>& encoded);
+
+    // --- 类型化错误（cluster-aware 客户端据此路由） ---
+    // 错误码是响应的第一个单词，客户端按它分派，因此不能统一加 "-ERR"。
+    static std::string encodeTypedError(const std::string& code, const std::string& msg);
+    static std::string encodeMovedError(int slot, const std::string& target);
+    static std::string encodeAskError(int slot, const std::string& target);
+    static std::string encodeCrossSlotError();
+    static std::string encodeTryAgainError(const std::string& msg);
+    static std::string encodeClusterDownError(const std::string& msg);
 };

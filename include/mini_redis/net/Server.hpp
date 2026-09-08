@@ -13,12 +13,19 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace cluster {
+class ClusterRouter;
+} // namespace cluster
+
 class Server {
 public:
     // Compatibility constructor: owns one database and uses it for commands and maintenance.
     explicit Server(int port = 6380);
+    // A non-null router puts the node in cluster mode: commands are routed by
+    // hash slot before execution. A null router keeps single-node behaviour.
     Server(Database& database, int port = 6380,
-           volatile std::sig_atomic_t* shutdown_flag = nullptr);
+           volatile std::sig_atomic_t* shutdown_flag = nullptr,
+           cluster::ClusterRouter* router = nullptr);
     ~Server();
     void run();  // 主事件循环
 

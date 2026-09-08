@@ -1,20 +1,45 @@
 // Command.hpp
 #pragma once
-#include <vector>
+#include <cstdint>
 #include <string>
+#include <vector>
+#include "mini_redis/cluster/ClientSession.hpp"
 #include "mini_redis/net/Protocol.hpp"
 
 class Database;
 
+namespace cluster {
+class ClusterRouter;
+struct RouteDecision;
+} // namespace cluster
+
 class CommandHandler {
 public:
+    // 单节点模式：router 为空，命令直接在本地执行。
     explicit CommandHandler(Database& db) : db_(db) {}
+    // 集群模式：先经 router 做 slot / owner / 迁移状态判定，再决定本地执行或重定向。
+    CommandHandler(Database& db, cluster::ClusterRouter* router)
+        : db_(db), router_(router) {}
 
-    // 执行命令，返回 RESP 响应字符串
+    bool clusterEnabled() const { return router_ != nullptr; }
+
+    // 执行命令，返回 RESP 响应字符串。使用内部会话，适用于单节点与测试。
     std::string execute(const std::vector<std::string>& args);
+
+    // ASKING 这类一次性路由状态属于连接，因此集群模式下需要显式传入会话。
+    std::string execute(const std::vector<std::string>& args,
+                        cluster::ClientSession& session);
 
 private:
     Database& db_;
+    cluster::ClusterRouter* router_ = nullptr;
+    cluster::ClientSession default_session_;
+
+    // 命令名已大写，负责把请求送到具体处理函数。
+    std::string dispatch(const std::string& command,
+                         const std::vector<std::string>& args);
+
+    static std::string encodeRedirect(const cluster::RouteDecision& decision);
 
     // 具体命令处理函数
     std::string handlePing(const std::vector<std::string>& args);
@@ -57,4 +82,11 @@ private:
 
     std::string handleSave(const std::vector<std::string>& args);
 
+    // --- 集群路由命令 ---
+    std::string handleAsking(const std::vector<std::string>& args,
+                             cluster::ClientSession& session,
+                             std::uint64_t request_seq);
+    std::string handleCluster(const std::vector<std::string>& args);
+    std::string handleClusterSlots();
+    std::string handleClusterInfo();
 };

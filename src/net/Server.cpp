@@ -52,10 +52,11 @@ Server::Server(int port)
       shutdown_flag_(nullptr) {}
 
 Server::Server(Database& database, int port,
-               volatile std::sig_atomic_t* shutdown_flag)
+               volatile std::sig_atomic_t* shutdown_flag,
+               cluster::ClusterRouter* router)
     : owned_db_(nullptr),
       db_(database),
-      command_handler_(database),
+      command_handler_(database, router),
       port_(port),
       listen_fd_(-1),
       epoll_fd_(-1),
@@ -199,7 +200,8 @@ Server::InputProcessResult Server::process_client_input(
             return outcome;
         }
 
-        connection.sendResponse(command_handler_.execute(arguments));
+        connection.sendResponse(
+            command_handler_.execute(arguments, connection.session()));
         connection.consumeInput(bytes_consumed);
         ++outcome.commands_processed;
         if (connection.pendingWriteBytes() >= kOutputHighWatermark) {
