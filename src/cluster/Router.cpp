@@ -97,6 +97,7 @@ RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys
         return decision;
     }
     decision.shard = owner;
+    decision.slot_epoch = snapshot->slotEpoch(slot);
 
     const SlotMigration* migration = snapshot->migrationForSlot(slot);
     // 读和写都要求本节点是该分片 Raft group 的 leader：写需要 leader 才能

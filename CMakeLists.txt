@@ -25,6 +25,7 @@ set(CORE_SOURCES
     src/cluster/Router.cpp
     src/cluster/Slot.cpp
     src/cluster/Topology.cpp
+    src/command/CanonicalCommand.cpp
     src/command/Command.cpp
     src/command/CommandSpec.cpp
     src/consensus/MemoryStorage.cpp
@@ -132,6 +133,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_raft_core_test PRIVATE mini_redis_core)
     add_test(NAME raft_core COMMAND mini_redis_raft_core_test)
+
+    add_executable(mini_redis_deterministic_state_machine_test
+        tests/DeterministicStateMachineTest.cpp
+    )
+    target_link_libraries(mini_redis_deterministic_state_machine_test PRIVATE mini_redis_core)
+    add_test(NAME deterministic_state_machine COMMAND mini_redis_deterministic_state_machine_test)
 endif()
 
 # （可选）设置输出目录

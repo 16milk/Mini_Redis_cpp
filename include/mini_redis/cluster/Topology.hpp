@@ -83,6 +83,8 @@ public:
     const ShardRecord* findShard(ShardId shard_id) const;
 
     ShardId slotOwner(SlotId slot) const { return slot_owner_[slot]; }
+    // Ownership generation used to fence delayed requests and old leaders.
+    std::uint64_t slotEpoch(SlotId slot) const { return slot_epoch_[slot]; }
     std::size_t assignedSlotCount() const { return assigned_slot_count_; }
     bool allSlotsAssigned() const {
         return assigned_slot_count_ == static_cast<std::size_t>(kSlotCount);
@@ -116,6 +118,7 @@ private:
     std::vector<NodeRecord> nodes_;
     std::vector<ShardRecord> shards_;
     std::array<ShardId, kSlotCount> slot_owner_{};
+    std::array<std::uint64_t, kSlotCount> slot_epoch_{};
     std::size_t assigned_slot_count_ = 0;
     std::unordered_map<SlotId, SlotMigration> migrations_;
     std::unordered_map<ShardId, LeaderHint> leader_hints_;
@@ -134,6 +137,7 @@ public:
     TopologyBuilder& addShard(ShardId shard_id, std::vector<NodeId> voters);
     TopologyBuilder& assignSlots(ShardId shard_id, SlotRange range);
     TopologyBuilder& assignSlot(ShardId shard_id, SlotId slot);
+    TopologyBuilder& setSlotEpoch(SlotId slot, std::uint64_t epoch);
     TopologyBuilder& setLeaderHint(ShardId shard_id, NodeId node_id, std::uint64_t term,
                                    std::int64_t expires_at_ms);
     TopologyBuilder& setMigration(SlotId slot, ShardId source, ShardId target,
@@ -147,6 +151,7 @@ private:
     std::vector<NodeRecord> nodes_;
     std::vector<ShardRecord> shards_;
     std::vector<std::pair<ShardId, SlotRange>> slot_assignments_;
+    std::vector<std::pair<SlotId, std::uint64_t>> slot_epochs_;
     std::vector<std::pair<ShardId, LeaderHint>> leader_hints_;
     std::vector<SlotMigration> migrations_;
 };

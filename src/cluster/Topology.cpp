@@ -155,6 +155,11 @@ TopologyBuilder& TopologyBuilder::assignSlot(ShardId shard_id, SlotId slot) {
     return assignSlots(shard_id, range);
 }
 
+TopologyBuilder& TopologyBuilder::setSlotEpoch(SlotId slot, std::uint64_t epoch) {
+    slot_epochs_.emplace_back(slot, epoch);
+    return *this;
+}
+
 TopologyBuilder& TopologyBuilder::setLeaderHint(ShardId shard_id, NodeId node_id,
                                                 std::uint64_t term,
                                                 std::int64_t expires_at_ms) {
@@ -182,6 +187,9 @@ TopologyPtr TopologyBuilder::build() const {
     // enforced here instead of being re-checked on the request path.
     std::shared_ptr<TopologySnapshot> snapshot(new TopologySnapshot());
     snapshot->config_epoch_ = config_epoch_;
+    // Epoch zero means "no ownership context" in canonical commands. A
+    // topology without an explicit metadata epoch is its initial generation.
+    snapshot->slot_epoch_.fill(config_epoch_ == 0 ? 1 : config_epoch_);
 
     for (const NodeRecord& node : nodes_) {
         if (node.id.empty()) {
@@ -238,6 +246,16 @@ TopologyPtr TopologyBuilder::build() const {
                 ++snapshot->assigned_slot_count_;
             }
         }
+    }
+
+    for (const auto& [slot, epoch] : slot_epochs_) {
+        if (slot >= kSlotCount || snapshot->slot_owner_[slot] == kNoShard) {
+            throw std::invalid_argument("slot epoch references an unassigned slot");
+        }
+        if (epoch == 0) {
+            throw std::invalid_argument("slot epoch must be non-zero");
+        }
+        snapshot->slot_epoch_[slot] = epoch;
     }
 
     for (const auto& [shard_id, hint] : leader_hints_) {

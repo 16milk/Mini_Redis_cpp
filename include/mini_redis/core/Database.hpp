@@ -35,6 +35,20 @@ class Database {
 public:
     using NowFunction = std::function<UnixMillis()>;
 
+    // Pins all time observations made by one state-machine Apply to the
+    // replicated logical timestamp carried in its log entry.
+    class ScopedLogicalTime {
+    public:
+        ScopedLogicalTime(Database& database, UnixMillis now_ms);
+        ~ScopedLogicalTime();
+        ScopedLogicalTime(const ScopedLogicalTime&) = delete;
+        ScopedLogicalTime& operator=(const ScopedLogicalTime&) = delete;
+
+    private:
+        Database& database_;
+        std::optional<UnixMillis> previous_;
+    };
+
     Database();
     explicit Database(bool disable_rdb_load);
     Database(bool disable_rdb_load, NowFunction now_function);
@@ -118,6 +132,7 @@ private:
     ExpireMap expires_;
     ExpireSchedule expire_schedule_;
     NowFunction now_function_;
+    std::optional<UnixMillis> logical_now_ms_;
     ExpirationStats expiration_stats_;
 
     std::shared_ptr<RedisObject> lookupKey(const std::string& key);

@@ -1,4 +1,5 @@
 #include "mini_redis/consensus/RaftCore.hpp"
+#include "mini_redis/command/CanonicalCommand.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -181,6 +182,10 @@ void RaftCore::step(Message msg) {
         case MessageType::kPreVoteResponse:
             break;
     }
+}
+
+ProposeResult RaftCore::proposeCanonical(const command::CanonicalCommand& canonical) {
+    return propose(command::encodeCanonicalCommand(canonical));
 }
 
 ProposeResult RaftCore::propose(std::string payload) {

@@ -8,6 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace command {
+struct CanonicalCommand;
+}
+
 namespace consensus {
 
 // 纯 Raft 状态机。输入是 tick / RPC / propose / durable completion / applied 回告，
@@ -40,6 +44,9 @@ public:
     void tick(std::int64_t now_ms);
     void step(Message msg);
 
+    // Data commands should use this entry point so raw RESP frames and encoded
+    // client responses can never become command-log payloads.
+    ProposeResult proposeCanonical(const command::CanonicalCommand& command);
     ProposeResult propose(std::string payload);
     ProposeResult addLearner(const NodeId& node_id);
     ProposeResult promoteLearner(const NodeId& node_id);

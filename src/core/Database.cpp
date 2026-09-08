@@ -33,6 +33,15 @@ Database::Database(bool disable_rdb_load, NowFunction now_function)
     }
 }
 
+Database::ScopedLogicalTime::ScopedLogicalTime(Database& database, UnixMillis now_ms)
+    : database_(database), previous_(database.logical_now_ms_) {
+    database_.logical_now_ms_ = now_ms;
+}
+
+Database::ScopedLogicalTime::~ScopedLogicalTime() {
+    database_.logical_now_ms_ = previous_;
+}
+
 void Database::set(const std::string& key, const std::string& value) {
     expireIfNeeded(key, nowMs());
     auto obj = std::make_shared<StringObject>(value);
@@ -618,7 +627,7 @@ std::optional<UnixMillis> Database::nextExpireAt() const {
 }
 
 UnixMillis Database::nowMs() const {
-    return now_function_();
+    return logical_now_ms_.has_value() ? *logical_now_ms_ : now_function_();
 }
 
 UnixMillis Database::systemNowMs() {

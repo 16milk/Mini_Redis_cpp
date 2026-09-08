@@ -28,6 +28,7 @@ struct RouteDecision {
     bool has_slot = false;
     SlotId slot = 0;
     ShardId shard = kNoShard;
+    std::uint64_t slot_epoch = 0;
     Endpoint endpoint;  // 仅 kMoved / kAsk 有意义
     std::string detail;
     bool consumed_asking = false;
