@@ -7,6 +7,10 @@
 #include <string>
 #include <unordered_map>
 
+// Redis RDB v9 import/export. This is not a Raft recovery point: it does not
+// record term, log index, membership, slot ownership or migration state.
+// Crash recovery uses WAL + group snapshots via PersistentStorage.
+
 using ObjectMap = std::unordered_map<std::string, std::shared_ptr<RedisObject>>;
 
 struct RdbLoadResult {

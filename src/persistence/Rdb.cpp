@@ -5,6 +5,8 @@
 #include "mini_redis/objects/SetObject.hpp"
 #include "mini_redis/objects/StringObject.hpp"
 #include "mini_redis/objects/ZSetObject.hpp"
+#include "mini_redis/persistence/Checksum.hpp"
+#include "mini_redis/persistence/DurableFile.hpp"
 
 #include <array>
 #include <chrono>
@@ -14,12 +16,10 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
-#include <sys/stat.h>
 #include <unordered_set>
 #include <unistd.h>
 #include <utility>
@@ -58,7 +58,6 @@ constexpr uint8_t RDB_ENC_INT16 = 1;
 constexpr uint8_t RDB_ENC_INT32 = 2;
 constexpr uint8_t RDB_ENC_LZF = 3;
 
-constexpr uint64_t CRC64_POLY = UINT64_C(0xad93d23594c935a9);
 constexpr uint32_t LISTPACK_HEADER_SIZE = 6;
 constexpr uint8_t LISTPACK_EOF = 0xff;
 constexpr size_t MAX_RDB_STRING_BYTES = 512ULL * 1024ULL * 1024ULL;
@@ -138,28 +137,6 @@ UnixMillis checkedExpireSeconds(uint32_t value) {
     }
     return static_cast<UnixMillis>(value) *
            static_cast<UnixMillis>(MILLIS_PER_SECOND);
-}
-
-uint64_t crc64(const uint8_t* data, size_t length) {
-    uint64_t crc = 0;
-    for (size_t offset = 0; offset < length; ++offset) {
-        const uint8_t byte = data[offset];
-        for (uint8_t bit_mask = 1; bit_mask != 0; bit_mask <<= 1) {
-            const bool top_bit = (crc & (UINT64_C(1) << 63)) != 0;
-            const bool input_bit = (byte & bit_mask) != 0;
-            crc <<= 1;
-            if (top_bit != input_bit) {
-                crc ^= CRC64_POLY;
-            }
-        }
-    }
-
-    uint64_t reflected = 0;
-    for (size_t index = 0; index < 64; ++index) {
-        reflected = (reflected << 1) | (crc & 1);
-        crc >>= 1;
-    }
-    return reflected;
 }
 
 class BufferWriter {
@@ -864,72 +841,11 @@ std::vector<uint8_t> readFile(const std::string& filename) {
 }
 
 bool writeAtomically(const std::string& filename, const std::vector<uint8_t>& bytes) {
-    std::string temporary_template = filename + ".tmp.XXXXXX";
-    std::vector<char> temporary_path(temporary_template.begin(), temporary_template.end());
-    temporary_path.push_back('\0');
-    int fd = mkstemp(temporary_path.data());
-    const std::string temporary(temporary_path.data());
-    if (fd == -1) {
-        logError(errnoMessage("cannot create temporary RDB file", filename));
+    std::string error;
+    if (!persistence::writeFileAtomically(filename, bytes, error)) {
+        logError(error);
         return false;
     }
-    if (fchmod(fd, 0644) == -1) {
-        logError(errnoMessage("cannot set permissions on temporary RDB file", temporary));
-        close(fd);
-        std::remove(temporary.c_str());
-        return false;
-    }
-
-    bool success = true;
-    size_t offset = 0;
-    while (offset < bytes.size()) {
-        const ssize_t written = write(fd, bytes.data() + offset, bytes.size() - offset);
-        if (written > 0) {
-            offset += static_cast<size_t>(written);
-            continue;
-        }
-        if (written < 0 && errno == EINTR) {
-            continue;
-        }
-        logError(errnoMessage("cannot write temporary RDB file", temporary));
-        success = false;
-        break;
-    }
-
-    if (success && fsync(fd) == -1) {
-        logError(errnoMessage("cannot fsync temporary RDB file", temporary));
-        success = false;
-    }
-    if (close(fd) == -1 && success) {
-        logError(errnoMessage("cannot close temporary RDB file", temporary));
-        success = false;
-    }
-    if (!success) {
-        std::remove(temporary.c_str());
-        return false;
-    }
-
-    if (rename(temporary.c_str(), filename.c_str()) == -1) {
-        logError(errnoMessage("cannot atomically replace RDB file", filename));
-        std::remove(temporary.c_str());
-        return false;
-    }
-
-    const size_t slash = filename.find_last_of('/');
-    const std::string directory = slash == std::string::npos ? "."
-        : slash == 0 ? "/" : filename.substr(0, slash);
-    const int directory_fd = open(directory.c_str(), O_RDONLY);
-    if (directory_fd == -1) {
-        logError(errnoMessage("RDB file replaced but cannot open parent directory for fsync", directory));
-        return false;
-    }
-    if (fsync(directory_fd) == -1) {
-        logError(errnoMessage("RDB file replaced but cannot fsync parent directory", directory));
-        close(directory_fd);
-        return false;
-    }
-    close(directory_fd);
-
     return true;
 }
 
@@ -998,7 +914,7 @@ bool RdbEncoder::saveToFile(
         }
 
         writer.writeByte(RDB_OPCODE_EOF);
-        const uint64_t checksum = crc64(writer.bytes().data(), writer.bytes().size());
+        const uint64_t checksum = persistence::crc64Redis(writer.bytes().data(), writer.bytes().size());
         appendLe64(writer.bytes(), checksum);
         return writeAtomically(filename, writer.bytes());
     } catch (const std::exception& exception) {
@@ -1058,7 +974,7 @@ RdbLoadResult RdbDecoder::decodeAll(UnixMillis load_now_ms) {
     const size_t payload_end = all_bytes.size() - checksum_length;
     if (version >= 5) {
         const uint64_t stored_checksum = readLe64(all_bytes.data() + payload_end);
-        const uint64_t computed_checksum = crc64(all_bytes.data(), payload_end);
+        const uint64_t computed_checksum = persistence::crc64Redis(all_bytes.data(), payload_end);
         if (stored_checksum != 0 && stored_checksum != computed_checksum) {
             throw std::runtime_error("RDB CRC64 checksum mismatch");
         }

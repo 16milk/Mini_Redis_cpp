@@ -50,6 +50,11 @@ set(CORE_SOURCES
     src/objects/StringObject.cpp
     src/objects/ZSetObject.cpp
     src/objects/intset.cpp
+    src/persistence/Checksum.cpp
+    src/persistence/DurableFile.cpp
+    src/persistence/GroupSnapshot.cpp
+    src/persistence/LogicalObject.cpp
+    src/persistence/PersistentStorage.cpp
     src/persistence/Rdb.cpp
 )
 
@@ -164,6 +169,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_slot_migration_test PRIVATE mini_redis_core)
     add_test(NAME slot_migration COMMAND mini_redis_slot_migration_test)
+
+    add_executable(mini_redis_wal_snapshot_test
+        tests/WalSnapshotTest.cpp
+    )
+    target_link_libraries(mini_redis_wal_snapshot_test PRIVATE mini_redis_core)
+    add_test(NAME wal_snapshot COMMAND mini_redis_wal_snapshot_test)
 endif()
 
 # （可选）设置输出目录
