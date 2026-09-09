@@ -1,6 +1,7 @@
 #include "mini_redis/cluster/Topology.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace cluster {
@@ -121,7 +122,12 @@ std::vector<std::pair<SlotRange, ShardId>> TopologySnapshot::slotRanges() const 
 }
 
 TopologyBuilder& TopologyBuilder::setConfigEpoch(std::uint64_t epoch) {
-    config_epoch_ = epoch;
+    topology_revision_ = epoch;
+    return *this;
+}
+
+TopologyBuilder& TopologyBuilder::setTopologyRevision(std::uint64_t revision) {
+    topology_revision_ = revision;
     return *this;
 }
 
@@ -172,11 +178,15 @@ TopologyBuilder& TopologyBuilder::setLeaderHint(ShardId shard_id, NodeId node_id
 }
 
 TopologyBuilder& TopologyBuilder::setMigration(SlotId slot, ShardId source, ShardId target,
-                                               bool target_ready) {
+                                               bool target_ready,
+                                               std::uint64_t from_epoch,
+                                               std::uint64_t to_epoch) {
     SlotMigration migration;
     migration.slot = slot;
     migration.source = source;
     migration.target = target;
+    migration.from_epoch = from_epoch;
+    migration.to_epoch = to_epoch;
     migration.target_ready = target_ready;
     migrations_.push_back(migration);
     return *this;
@@ -186,10 +196,10 @@ TopologyPtr TopologyBuilder::build() const {
     // The snapshot is immutable once published, so every consistency rule is
     // enforced here instead of being re-checked on the request path.
     std::shared_ptr<TopologySnapshot> snapshot(new TopologySnapshot());
-    snapshot->config_epoch_ = config_epoch_;
-    // Epoch zero means "no ownership context" in canonical commands. A
-    // topology without an explicit metadata epoch is its initial generation.
-    snapshot->slot_epoch_.fill(config_epoch_ == 0 ? 1 : config_epoch_);
+    snapshot->topology_revision_ = topology_revision_;
+    // Ownership generations are independent from topology revisions. Static
+    // bootstrap descriptions without explicit per-slot epochs start at 1.
+    snapshot->slot_epoch_.fill(1);
 
     for (const NodeRecord& node : nodes_) {
         if (node.id.empty()) {
@@ -267,7 +277,7 @@ TopologyPtr TopologyBuilder::build() const {
         snapshot->leader_hints_[shard_id] = hint;
     }
 
-    for (const SlotMigration& migration : migrations_) {
+    for (SlotMigration migration : migrations_) {
         if (migration.slot >= kSlotCount) {
             throw std::invalid_argument("migration slot out of range");
         }
@@ -290,6 +300,16 @@ TopologyPtr TopologyBuilder::build() const {
         }
         if (migration.source == migration.target) {
             throw std::invalid_argument("migration source and target are identical");
+        }
+        const std::uint64_t owner_epoch = snapshot->slot_epoch_[migration.slot];
+        if (migration.from_epoch == 0) migration.from_epoch = owner_epoch;
+        if (migration.to_epoch == 0 &&
+            migration.from_epoch != std::numeric_limits<std::uint64_t>::max()) {
+            migration.to_epoch = migration.from_epoch + 1;
+        }
+        if (migration.from_epoch != owner_epoch ||
+            migration.to_epoch <= migration.from_epoch) {
+            throw std::invalid_argument("migration ownership epochs are invalid");
         }
         snapshot->migrations_[migration.slot] = migration;
     }

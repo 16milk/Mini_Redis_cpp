@@ -22,8 +22,13 @@ find_package(Threads REQUIRED)
 # 可由服务端和测试复用的核心实现
 set(CORE_SOURCES
     src/cluster/ClusterConfig.cpp
+    src/cluster/MetadataCommand.cpp
+    src/cluster/MetadataController.cpp
+    src/cluster/MetadataStateMachine.cpp
+    src/cluster/MetadataWatcher.cpp
     src/cluster/Router.cpp
     src/cluster/Slot.cpp
+    src/cluster/SlotOwnership.cpp
     src/cluster/Topology.cpp
     src/command/CanonicalCommand.cpp
     src/command/Command.cpp
@@ -139,6 +144,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_deterministic_state_machine_test PRIVATE mini_redis_core)
     add_test(NAME deterministic_state_machine COMMAND mini_redis_deterministic_state_machine_test)
+
+    add_executable(mini_redis_metadata_state_machine_test
+        tests/MetadataStateMachineTest.cpp
+    )
+    target_link_libraries(mini_redis_metadata_state_machine_test PRIVATE mini_redis_core)
+    add_test(NAME metadata_state_machine COMMAND mini_redis_metadata_state_machine_test)
+
+    add_executable(mini_redis_metadata_raft_test
+        tests/MetadataRaftTest.cpp
+    )
+    target_link_libraries(mini_redis_metadata_raft_test PRIVATE mini_redis_core)
+    add_test(NAME metadata_raft COMMAND mini_redis_metadata_raft_test)
 endif()
 
 # （可选）设置输出目录

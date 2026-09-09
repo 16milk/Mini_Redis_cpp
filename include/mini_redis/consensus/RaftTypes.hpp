@@ -14,6 +14,10 @@ using Index = std::uint64_t;
 using ProposalId = std::uint64_t;
 using ReadId = std::uint64_t;
 
+// Data shard ids are 1-based. Group 0 is permanently reserved for the
+// independent metadata control-plane quorum.
+constexpr GroupId kMetadataGroupId = 0;
+
 // Learner 是成员身份，不是选举角色。选举角色只有 follower / candidate / leader。
 enum class RaftRole {
     kFollower,

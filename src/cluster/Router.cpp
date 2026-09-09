@@ -1,6 +1,7 @@
 #include "mini_redis/cluster/Router.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 namespace cluster {
@@ -26,13 +27,26 @@ ClusterRouter::ClusterRouter(NodeId self_id, TopologyPtr topology)
     : self_id_(std::move(self_id)), topology_(std::move(topology)) {}
 
 TopologyPtr ClusterRouter::topology() const {
-    std::lock_guard<std::mutex> guard(topology_mutex_);
-    return topology_;
+    return std::atomic_load_explicit(&topology_, std::memory_order_acquire);
 }
 
-void ClusterRouter::publishTopology(TopologyPtr topology) {
-    std::lock_guard<std::mutex> guard(topology_mutex_);
-    topology_ = std::move(topology);
+bool ClusterRouter::publishTopology(TopologyPtr topology) {
+    if (!topology) {
+        return false;
+    }
+    TopologyPtr current =
+        std::atomic_load_explicit(&topology_, std::memory_order_acquire);
+    for (;;) {
+        if (current &&
+            topology->topologyRevision() < current->topologyRevision()) {
+            return false;
+        }
+        if (std::atomic_compare_exchange_weak_explicit(
+                &topology_, &current, topology, std::memory_order_release,
+                std::memory_order_acquire)) {
+            return true;
+        }
+    }
 }
 
 RouteDecision ClusterRouter::route(const CommandSpec& spec,
@@ -119,6 +133,8 @@ RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys
                     // 只会让客户端在 ASK 和本地之间打转，直接本地执行。
                     decision.action = RouteAction::kLocal;
                     decision.shard = migration->target;
+                    decision.slot_epoch = migration->to_epoch;
+                    decision.consumed_asking = true;
                     return decision;
                 }
                 const NodeRecord* target_node =
@@ -152,6 +168,7 @@ RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys
         if (target_leader && *target_leader == self_id_ &&
             session.askingFor(request_seq)) {
             decision.shard = migration->target;
+            decision.slot_epoch = migration->to_epoch;
             decision.consumed_asking = true;
             if (keys.size() > 1 && countMissingKeys(keys, probe) > 0) {
                 // 部分 key 还没搬过来，目标同样只能看到半张视图。

@@ -1,4 +1,6 @@
 #include "mini_redis/cluster/Slot.hpp"
+#include "mini_redis/cluster/SlotOwnership.hpp"
+#include "mini_redis/cluster/Router.hpp"
 #include "mini_redis/command/CanonicalCommand.hpp"
 #include "mini_redis/core/Database.hpp"
 
@@ -137,6 +139,67 @@ void testAtomicSameSlotMultiKeyWrite() {
            "all keys were deleted together");
 }
 
+void testPersistedOwnershipFence() {
+    const std::vector<std::string> request = {"SET", "{owned}:key", "value"};
+    const cluster::SlotId slot = cluster::keyToSlot(request[1]);
+    cluster::RouteDecision route;
+    route.action = cluster::RouteAction::kLocal;
+    route.has_slot = true;
+    route.slot = slot;
+    route.shard = 3;
+    route.slot_epoch = 7;
+
+    cluster::SlotOwnershipTable ownership;
+    cluster::LocalSlotOwnership stable;
+    stable.shard = 3;
+    stable.epoch = 7;
+    stable.state = cluster::LocalSlotState::kStable;
+    std::string error;
+    expect(ownership.update(slot, 0, stable, error),
+           "committed ownership can initialize a slot");
+    expect(command::canonicalizeWrite(request, route, 1000, ownership).ok,
+           "topology and local ownership jointly authorize a write");
+
+    route.slot_epoch = 8;
+    expect(!command::canonicalizeWrite(request, route, 1000, ownership).ok,
+           "newer routing cache cannot bypass older committed ownership");
+    route.slot_epoch = 7;
+
+    cluster::LocalSlotOwnership fenced = stable;
+    fenced.state = cluster::LocalSlotState::kSourceFenced;
+    fenced.migration_id = "migration-owned";
+    expect(ownership.update(slot, 7, fenced, error), "source fence commits");
+    expect(!command::canonicalizeWrite(request, route, 1000, ownership).ok,
+           "fenced source rejects proposal before Raft");
+
+    Database fenced_database(true);
+    command::DeterministicStateMachine fenced_state(fenced_database, 3);
+    const auto built = canonical({"SET", "{owned}:key", "value"});
+    expect(fenced_state.apply(built.command, ownership.get(slot)).status ==
+               command::ApplyStatus::kNoOpStaleEpoch,
+           "fence is checked again while applying a delayed log entry");
+
+    cluster::SlotOwnershipTable restored;
+    expect(restored.installSnapshot(ownership.snapshotBytes(), error) &&
+               restored.get(slot).state == cluster::LocalSlotState::kSourceFenced,
+           "ownership fence survives snapshot restore");
+
+    cluster::SlotOwnershipTable target;
+    cluster::LocalSlotOwnership active_ask;
+    active_ask.shard = 4;
+    active_ask.epoch = 8;
+    active_ask.state = cluster::LocalSlotState::kTargetActiveAsk;
+    expect(target.update(slot, 0, active_ask, error), "ASK target activates");
+    route.shard = 4;
+    route.slot_epoch = 8;
+    route.consumed_asking = false;
+    expect(!command::canonicalizeWrite(request, route, 1000, target).ok,
+           "target activation alone does not authorize ordinary traffic");
+    route.consumed_asking = true;
+    expect(command::canonicalizeWrite(request, route, 1000, target).ok,
+           "validated ASKING authorizes target traffic");
+}
+
 } // namespace
 
 int main() {
@@ -144,6 +207,7 @@ int main() {
     testBinaryCodec();
     testDeterministicTimeAndEpochFence();
     testAtomicSameSlotMultiKeyWrite();
+    testPersistedOwnershipFence();
     std::cout << "DeterministicStateMachineTest passed" << std::endl;
     return EXIT_SUCCESS;
 }

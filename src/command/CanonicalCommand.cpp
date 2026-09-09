@@ -2,6 +2,7 @@
 
 #include "mini_redis/cluster/Router.hpp"
 #include "mini_redis/cluster/Slot.hpp"
+#include "mini_redis/cluster/SlotOwnership.hpp"
 #include "mini_redis/command/CommandSpec.hpp"
 #include "mini_redis/core/Database.hpp"
 
@@ -400,6 +401,23 @@ CanonicalizeResult canonicalizeWrite(const std::vector<std::string>& request,
     return result;
 }
 
+CanonicalizeResult canonicalizeWrite(
+    const std::vector<std::string>& request,
+    const cluster::RouteDecision& route, UnixMillis logical_time_ms,
+    const cluster::SlotOwnershipTable& ownership) {
+    CanonicalizeResult result =
+        canonicalizeWrite(request, route, logical_time_ms);
+    if (!result.ok) {
+        return result;
+    }
+    std::string error;
+    if (!ownership.canAcceptWrite(route.slot, route.shard, route.slot_epoch,
+                                  route.consumed_asking, &error)) {
+        return failure(std::move(error));
+    }
+    return result;
+}
+
 std::string encodeCanonicalCommand(const CanonicalCommand& command) {
     std::string error;
     if (command.version != kCanonicalCommandVersion ||
@@ -632,6 +650,32 @@ ApplyResult DeterministicStateMachine::apply(
     ApplyResult result;
     result.error = "unknown canonical command";
     return result;
+}
+
+ApplyResult DeterministicStateMachine::apply(
+    const std::string& log_payload,
+    const cluster::LocalSlotOwnership& current_ownership) {
+    CanonicalCommand command;
+    std::string error;
+    if (!decodeCanonicalCommand(log_payload, command, error)) {
+        ApplyResult result;
+        result.error = std::move(error);
+        return result;
+    }
+    return apply(command, current_ownership);
+}
+
+ApplyResult DeterministicStateMachine::apply(
+    const CanonicalCommand& command,
+    const cluster::LocalSlotOwnership& current_ownership) {
+    SlotOwnership ownership;
+    ownership.shard = current_ownership.shard;
+    ownership.epoch = current_ownership.epoch;
+    if (current_ownership.state != cluster::LocalSlotState::kStable &&
+        current_ownership.state != cluster::LocalSlotState::kTargetActiveAsk) {
+        ownership.shard = cluster::kNoShard;
+    }
+    return apply(command, ownership);
 }
 
 } // namespace command

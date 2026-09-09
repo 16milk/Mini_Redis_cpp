@@ -57,6 +57,8 @@ struct SlotMigration {
     SlotId slot = 0;
     ShardId source = kNoShard;
     ShardId target = kNoShard;
+    std::uint64_t from_epoch = 0;
+    std::uint64_t to_epoch = 0;
     // True once the source group has committed TargetReady(proof), which is
     // what opens the ASK window. Before that the source still answers locally.
     bool target_ready = false;
@@ -67,7 +69,9 @@ struct SlotMigration {
 // snapshot another request is already routing against.
 class TopologySnapshot {
 public:
-    std::uint64_t configEpoch() const { return config_epoch_; }
+    std::uint64_t topologyRevision() const { return topology_revision_; }
+    // Compatibility name used by the existing CLUSTER INFO/config parser.
+    std::uint64_t configEpoch() const { return topology_revision_; }
 
     const std::vector<NodeRecord>& nodes() const { return nodes_; }
     const std::vector<ShardRecord>& shards() const { return shards_; }
@@ -114,7 +118,7 @@ private:
 
     TopologySnapshot() { slot_owner_.fill(kNoShard); }
 
-    std::uint64_t config_epoch_ = 0;
+    std::uint64_t topology_revision_ = 0;
     std::vector<NodeRecord> nodes_;
     std::vector<ShardRecord> shards_;
     std::array<ShardId, kSlotCount> slot_owner_{};
@@ -133,6 +137,7 @@ using TopologyPtr = std::shared_ptr<const TopologySnapshot>;
 class TopologyBuilder {
 public:
     TopologyBuilder& setConfigEpoch(std::uint64_t epoch);
+    TopologyBuilder& setTopologyRevision(std::uint64_t revision);
     TopologyBuilder& addNode(NodeId node_id, std::string host, std::uint16_t port);
     TopologyBuilder& addShard(ShardId shard_id, std::vector<NodeId> voters);
     TopologyBuilder& assignSlots(ShardId shard_id, SlotRange range);
@@ -141,13 +146,14 @@ public:
     TopologyBuilder& setLeaderHint(ShardId shard_id, NodeId node_id, std::uint64_t term,
                                    std::int64_t expires_at_ms);
     TopologyBuilder& setMigration(SlotId slot, ShardId source, ShardId target,
-                                  bool target_ready);
+                                  bool target_ready, std::uint64_t from_epoch = 0,
+                                  std::uint64_t to_epoch = 0);
 
     // Throws std::invalid_argument when the description is not self-consistent.
     TopologyPtr build() const;
 
 private:
-    std::uint64_t config_epoch_ = 0;
+    std::uint64_t topology_revision_ = 0;
     std::vector<NodeRecord> nodes_;
     std::vector<ShardRecord> shards_;
     std::vector<std::pair<ShardId, SlotRange>> slot_assignments_;

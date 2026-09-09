@@ -6,7 +6,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,7 +69,8 @@ public:
     TopologyPtr topology() const;
 
     // 发布新的不可变快照。已在路由中的请求继续使用旧快照。
-    void publishTopology(TopologyPtr topology);
+    // Returns false when an older revision tried to replace a newer snapshot.
+    bool publishTopology(TopologyPtr topology);
 
     RouteDecision route(const CommandSpec& spec, const std::vector<std::string>& args,
                         const ClientSession& session, std::uint64_t request_seq,
@@ -85,7 +85,6 @@ public:
 
 private:
     NodeId self_id_;
-    mutable std::mutex topology_mutex_;
     TopologyPtr topology_;
 };
 

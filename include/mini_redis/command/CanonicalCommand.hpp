@@ -11,6 +11,8 @@ class Database;
 
 namespace cluster {
 struct RouteDecision;
+struct LocalSlotOwnership;
+class SlotOwnershipTable;
 }
 
 namespace command {
@@ -85,6 +87,10 @@ CanonicalizeResult canonicalizeWrite(const std::vector<std::string>& request,
 CanonicalizeResult canonicalizeWrite(const std::vector<std::string>& request,
                                      const cluster::RouteDecision& route,
                                      UnixMillis logical_time_ms);
+CanonicalizeResult canonicalizeWrite(const std::vector<std::string>& request,
+                                     const cluster::RouteDecision& route,
+                                     UnixMillis logical_time_ms,
+                                     const cluster::SlotOwnershipTable& ownership);
 
 // Stable, endian-independent binary format suitable for LogEntry::payload.
 std::string encodeCanonicalCommand(const CanonicalCommand& command);
@@ -122,6 +128,10 @@ public:
                       const SlotOwnership& current_ownership);
     ApplyResult apply(const CanonicalCommand& command,
                       const SlotOwnership& current_ownership);
+    ApplyResult apply(const std::string& log_payload,
+                      const cluster::LocalSlotOwnership& current_ownership);
+    ApplyResult apply(const CanonicalCommand& command,
+                      const cluster::LocalSlotOwnership& current_ownership);
 
 private:
     Database& database_;

@@ -6,12 +6,14 @@
 #include "mini_redis/core/Database.hpp"
 
 #include <cstdlib>
+#include <atomic>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -412,6 +414,32 @@ int main() {
                  "so is CLUSTER SLOTS");
     expect_equal(standalone.execute(toArguments({"CLUSTER", "KEYSLOT", "foo"})),
                  ":12182\r\n", "CLUSTER KEYSLOT is a pure function and stays available");
+
+    // Snapshot publication is lock-free for readers and monotonic by revision.
+    cluster::TopologyBuilder revision8_builder = stableCluster();
+    const cluster::TopologyPtr revision8 =
+        revision8_builder.setTopologyRevision(8).build();
+    std::atomic<bool> readers_ok{true};
+    std::thread reader([&] {
+        for (int iteration = 0; iteration < 5000; ++iteration) {
+            const cluster::TopologyPtr snapshot = n1.router().topology();
+            if (!snapshot ||
+                (snapshot->topologyRevision() != 7 &&
+                 snapshot->topologyRevision() != 8) ||
+                snapshot->slotOwner(866) != 1 ||
+                snapshot->slotOwner(12182) != 2) {
+                readers_ok.store(false);
+                return;
+            }
+        }
+    });
+    expect(n1.router().publishTopology(revision8),
+           "newer topology revision publishes");
+    expect(!n1.router().publishTopology(stable),
+           "older topology revision cannot overwrite a newer snapshot");
+    reader.join();
+    expect(readers_ok.load() && n1.router().topology()->topologyRevision() == 8,
+           "concurrent readers observe one complete immutable snapshot");
 
     std::cout << "ClusterRoutingTest passed" << std::endl;
     return EXIT_SUCCESS;
