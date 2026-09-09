@@ -47,6 +47,7 @@ struct MetadataCommand {
     ShardId target_group = kNoShard;
     MigrationPhase migration_phase = MigrationPhase::kPreparing;
     std::string progress_proof;
+    std::string activation_proof;
 };
 
 std::string encodeMetadataCommand(const MetadataCommand& command);

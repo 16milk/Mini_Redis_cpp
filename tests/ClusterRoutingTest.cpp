@@ -223,19 +223,24 @@ int main() {
     Node source("n1", migrating, &clock);
     Node target("n2", migrating, &clock);
 
-    // Seeded before the window opens: this key has not been moved across yet.
-    source.database().set("hello", "still-here");
-    expect_equal(source.run({"GET", "hello"}), "$10\r\nstill-here\r\n",
-                 "the source keeps serving keys it still holds");
-    expect_equal(source.run({"SET", "hello", "still-here"}), "+OK\r\n",
-                 "and still accepts writes to them");
+    // The ASK window opens only after the source is fenced, and a fenced source
+    // has stopped applying writes for this slot. Whatever it still holds is a
+    // frozen snapshot, while the target is already accepting writes through
+    // ASKING. Answering from the local copy would hand back a value that has
+    // since been overwritten, so the handover is all-or-nothing per slot rather
+    // than per key.
+    source.database().set("hello", "stale-after-fence");
+    expect_equal(source.run({"GET", "hello"}), "-ASK 866 127.0.0.1:7002\r\n",
+                 "a fenced source redirects even keys it still physically holds");
+    expect_equal(source.run({"SET", "hello", "nope"}), "-ASK 866 127.0.0.1:7002\r\n",
+                 "and refuses writes to them");
     expect_equal(source.run({"GET", "{hello}:moved"}), "-ASK 866 127.0.0.1:7002\r\n",
                  "a key the source no longer holds produces a one-shot ASK");
     expect_equal(source.run({"SET", "{hello}:fresh", "1"}), "-ASK 866 127.0.0.1:7002\r\n",
                  "creating a new key in a migrating slot also belongs to the target");
     expect_equal(source.run({"EXISTS", "hello", "{hello}:moved"}),
-                 "-TRYAGAIN Multiple keys request during rehashing of slot\r\n",
-                 "a partially migrated key set would expose half a view");
+                 "-ASK 866 127.0.0.1:7002\r\n",
+                 "multi-key commands move as a unit, because the slot does");
 
     expect_equal(target.run({"GET", "{hello}:moved"}), "-MOVED 866 127.0.0.1:7001\r\n",
                  "without ASKING the target still points back at the committed owner");
@@ -257,12 +262,14 @@ int main() {
                      " 127.0.0.1:7001\r\n",
                  "ASKING never applies to a slot that is not being imported");
 
-    // The importing side must not serve a half-migrated key set either.
+    // The importing side holds the whole slot as of the fence, so a key that is
+    // absent is genuinely absent rather than "not copied yet". Treating absence
+    // as incompleteness would leave lookups of never-written keys retrying for
+    // as long as the migration record exists.
     target.database().set("{hello}:here", "1");
     expect_equal(target.run({"ASKING"}), "+OK\r\n", "ASKING before a multi-key command");
-    expect_equal(target.run({"EXISTS", "{hello}:here", "{hello}:notyet"}),
-                 "-TRYAGAIN Multiple keys request during rehashing of slot\r\n",
-                 "the target sees only part of the slot, so it declines as well");
+    expect_equal(target.run({"EXISTS", "{hello}:here", "{hello}:notyet"}), ":1\r\n",
+                 "the target answers for the whole slot, missing keys included");
 
     // A node that leads both the source and the target group must not ASK itself.
     const cluster::TopologyPtr self_migration = baseCluster()

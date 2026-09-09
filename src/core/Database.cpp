@@ -8,6 +8,7 @@
 #include "mini_redis/objects/StringObject.hpp"
 #include "mini_redis/objects/ZSetObject.hpp"
 #include "mini_redis/persistence/Rdb.hpp"
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
@@ -483,6 +484,72 @@ std::vector<std::string> Database::getAllKeys(const std::string& pattern) {
     return result;
 }
 
+bool Database::exportKey(const std::string& key, StoredEntry& out) const {
+    const auto data_it = data_.find(key);
+    if (data_it == data_.end()) {
+        return false;
+    }
+    const auto expire_it = expires_.find(key);
+    out.key = key;
+    out.object = data_it->second;
+    out.expire_at_ms = expire_it != expires_.end() ? expire_it->second : 0;
+    return true;
+}
+
+std::vector<StoredEntry> Database::exportKeys(
+    const std::function<bool(const std::string&)>& select) const {
+    std::vector<StoredEntry> entries;
+    if (!select) {
+        return entries;
+    }
+    for (const auto& [key, object] : data_) {
+        if (!select(key)) {
+            continue;
+        }
+        const auto expire_it = expires_.find(key);
+        entries.push_back(
+            {key, object, expire_it != expires_.end() ? expire_it->second : 0});
+    }
+    // data_ is an unordered_map, so only sorting makes the result replica-stable.
+    std::sort(entries.begin(), entries.end(),
+              [](const StoredEntry& left, const StoredEntry& right) {
+                  return left.key < right.key;
+              });
+    return entries;
+}
+
+void Database::importKey(const std::string& key,
+                         std::shared_ptr<RedisObject> object,
+                         UnixMillis expire_at_ms) {
+    if (!object) {
+        return;
+    }
+    storeKey(key, std::move(object));
+    if (expire_at_ms > 0) {
+        expires_.emplace(key, expire_at_ms);
+        expire_schedule_.emplace(expire_at_ms, key);
+    }
+}
+
+std::size_t Database::dropKeys(
+    const std::function<bool(const std::string&)>& select) {
+    if (!select) {
+        return 0;
+    }
+    std::vector<std::string> doomed;
+    for (const auto& [key, object] : data_) {
+        (void)object;
+        if (select(key)) {
+            doomed.push_back(key);
+        }
+    }
+    std::size_t removed = 0;
+    for (const std::string& key : doomed) {
+        removed += eraseKey(key) ? 1 : 0;
+    }
+    return removed;
+}
+
 bool Database::saveRdb(const std::string& filename) const {
     return RdbEncoder::saveToFile(filename, data_, expires_, nowMs());
 }
@@ -582,6 +649,10 @@ bool Database::clearExpire(const std::string& key) {
 ExpireCycleResult Database::activeExpireCycle(
     std::size_t max_keys, std::chrono::microseconds max_runtime) {
     ExpireCycleResult result;
+    if (replicated_) {
+        result.more_due = !expire_schedule_.empty();
+        return result;
+    }
     ++expiration_stats_.active_expire_cycles_total;
     const UnixMillis now_ms = nowMs();
     const auto started = std::chrono::steady_clock::now();

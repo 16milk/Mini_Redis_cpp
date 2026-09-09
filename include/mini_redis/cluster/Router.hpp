@@ -33,8 +33,10 @@ struct RouteDecision {
     bool consumed_asking = false;
 };
 
-// 判断 key 是否存在于本地状态机。迁移窗口内用它区分"还在本地"与"已经搬走"。
-using KeyPresenceProbe = std::function<bool(std::string_view)>;
+// 迁移是整槽原子切换：Fence 之前整个 slot 都归源端，Fence 之后整个 slot 都归
+// 目标端，不存在 Redis Cluster 那种逐 key 搬迁的中间态。因此路由不再探测 key
+// 是否存在于本地——那个信号在这个协议里既不必要（切换是全量的），也不安全
+// （源端 Fence 后仍持有过期副本，按存在与否作答会返回陈旧值）。
 
 // CLUSTER SLOTS 的结构化结果。RESP 编码留在最外层，不进入路由逻辑。
 struct SlotRangeView {
@@ -74,11 +76,11 @@ public:
 
     RouteDecision route(const CommandSpec& spec, const std::vector<std::string>& args,
                         const ClientSession& session, std::uint64_t request_seq,
-                        const KeyPresenceProbe& probe, std::int64_t now_ms) const;
+                        std::int64_t now_ms) const;
 
     RouteDecision routeKeys(const std::vector<std::string_view>& keys,
                             const ClientSession& session, std::uint64_t request_seq,
-                            const KeyPresenceProbe& probe, std::int64_t now_ms) const;
+                            std::int64_t now_ms) const;
 
     ClusterSlotsView clusterSlotsView(std::int64_t now_ms) const;
     ClusterStatusView statusView(std::int64_t now_ms) const;

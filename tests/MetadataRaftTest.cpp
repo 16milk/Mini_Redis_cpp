@@ -317,7 +317,7 @@ int main() {
     cluster::ClientSession session;
     const cluster::RouteDecision route =
         cluster.node(data_leader).router.routeKeys(
-            {"stable-key"}, session, 1, {}, 1000);
+            {"stable-key"}, session, 1, 1000);
     expect(route.action == cluster::RouteAction::kLocal &&
                route.shard == 1 && route.slot_epoch == 1,
            "stable shard routing does not consult the unavailable control plane");

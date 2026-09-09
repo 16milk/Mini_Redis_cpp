@@ -162,12 +162,8 @@ std::string CommandHandler::execute(const std::vector<std::string>& args,
         return RespParser::encodeError("unknown command `" + args[0] + "`");
     }
 
-    // 迁移窗口内需要知道 key 是否还在本地状态机，才能区分本地服务与 ASK。
-    const cluster::KeyPresenceProbe probe = [this](std::string_view key) {
-        return db_.keyExists(std::string(key));
-    };
     const cluster::RouteDecision decision =
-        router_->route(*spec, args, session, request_seq, probe, db_.nowMs());
+        router_->route(*spec, args, session, request_seq, db_.nowMs());
     if (decision.action != cluster::RouteAction::kLocal) {
         return encodeRedirect(decision);
     }

@@ -5,23 +5,6 @@
 #include <utility>
 
 namespace cluster {
-namespace {
-
-std::size_t countMissingKeys(const std::vector<std::string_view>& keys,
-                             const KeyPresenceProbe& probe) {
-    if (!probe) {
-        return 0;
-    }
-    std::size_t missing = 0;
-    for (const std::string_view key : keys) {
-        if (!probe(key)) {
-            ++missing;
-        }
-    }
-    return missing;
-}
-
-} // namespace
 
 ClusterRouter::ClusterRouter(NodeId self_id, TopologyPtr topology)
     : self_id_(std::move(self_id)), topology_(std::move(topology)) {}
@@ -53,7 +36,6 @@ RouteDecision ClusterRouter::route(const CommandSpec& spec,
                                    const std::vector<std::string>& args,
                                    const ClientSession& session,
                                    std::uint64_t request_seq,
-                                   const KeyPresenceProbe& probe,
                                    std::int64_t now_ms) const {
     RouteDecision decision;
 
@@ -73,13 +55,12 @@ RouteDecision ClusterRouter::route(const CommandSpec& spec,
         // 避免路由层对同一种错误给出第二套文案。
         return decision;
     }
-    return routeKeys(keys, session, request_seq, probe, now_ms);
+    return routeKeys(keys, session, request_seq, now_ms);
 }
 
 RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys,
                                        const ClientSession& session,
                                        std::uint64_t request_seq,
-                                       const KeyPresenceProbe& probe,
                                        std::int64_t now_ms) const {
     RouteDecision decision;
     if (keys.empty()) {
@@ -123,38 +104,35 @@ RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys
     if (self_is_owner_leader) {
         // 迁移中的源分片：只有目标已经安全激活（源 Raft 已提交
         // TargetReady(proof)）才打开 ASK 窗口。
+        //
+        // 一旦打开就是全量转发，不再按 key 是否还在本地判断。源端此时已经
+        // Fence：它手里的那份数据是快照，目标端却已经在接受 ASKING 写入。
+        // 只要本地还留着 key 就本地作答，等于把已经过时的值当成当前值返回，
+        // 破坏线性一致性。Fence 之后源端对这个 slot 不再有任何发言权，
+        // 键在不在本地都一样。
         if (migration != nullptr && migration->target_ready) {
-            const std::size_t missing = countMissingKeys(keys, probe);
-            if (missing == keys.size()) {
-                const std::optional<NodeId> target_leader =
-                    snapshot->trustedLeader(migration->target, now_ms);
-                if (target_leader && *target_leader == self_id_) {
-                    // 同一节点同时是源分片和目标分片的 leader。重定向到自己
-                    // 只会让客户端在 ASK 和本地之间打转，直接本地执行。
-                    decision.action = RouteAction::kLocal;
-                    decision.shard = migration->target;
-                    decision.slot_epoch = migration->to_epoch;
-                    decision.consumed_asking = true;
-                    return decision;
-                }
-                const NodeRecord* target_node =
-                    target_leader ? snapshot->findNode(*target_leader) : nullptr;
-                if (target_node == nullptr) {
-                    decision.action = RouteAction::kTryAgain;
-                    decision.detail = "Migration target leader unknown";
-                    return decision;
-                }
-                decision.action = RouteAction::kAsk;
+            const std::optional<NodeId> target_leader =
+                snapshot->trustedLeader(migration->target, now_ms);
+            if (target_leader && *target_leader == self_id_) {
+                // 同一节点同时是源分片和目标分片的 leader。重定向到自己
+                // 只会让客户端在 ASK 和本地之间打转，直接本地执行。
+                decision.action = RouteAction::kLocal;
                 decision.shard = migration->target;
-                decision.endpoint = target_node->client;
+                decision.slot_epoch = migration->to_epoch;
+                decision.consumed_asking = true;
                 return decision;
             }
-            if (missing > 0) {
-                // 部分 key 已搬走：无论 ASK 到目标还是本地执行都会看到半张视图。
+            const NodeRecord* target_node =
+                target_leader ? snapshot->findNode(*target_leader) : nullptr;
+            if (target_node == nullptr) {
                 decision.action = RouteAction::kTryAgain;
-                decision.detail = "Multiple keys request during rehashing of slot";
+                decision.detail = "Migration target leader unknown";
                 return decision;
             }
+            decision.action = RouteAction::kAsk;
+            decision.shard = migration->target;
+            decision.endpoint = target_node->client;
+            return decision;
         }
         decision.action = RouteAction::kLocal;
         return decision;
@@ -167,15 +145,12 @@ RouteDecision ClusterRouter::routeKeys(const std::vector<std::string_view>& keys
             snapshot->trustedLeader(migration->target, now_ms);
         if (target_leader && *target_leader == self_id_ &&
             session.askingFor(request_seq)) {
+            // 目标端一旦 target_ready，它持有的就是 Fence 时刻的完整 slot，
+            // 不存在“搬了一半”的中间态。此处不再探测 key 是否存在：一个
+            // 本来就不存在的 key 会被误判成尚未搬到，把请求永远推进 TRYAGAIN。
             decision.shard = migration->target;
             decision.slot_epoch = migration->to_epoch;
             decision.consumed_asking = true;
-            if (keys.size() > 1 && countMissingKeys(keys, probe) > 0) {
-                // 部分 key 还没搬过来，目标同样只能看到半张视图。
-                decision.action = RouteAction::kTryAgain;
-                decision.detail = "Multiple keys request during rehashing of slot";
-                return decision;
-            }
             decision.action = RouteAction::kLocal;
             return decision;
         }

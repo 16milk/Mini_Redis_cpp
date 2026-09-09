@@ -13,6 +13,7 @@ namespace cluster {
 struct RouteDecision;
 struct LocalSlotOwnership;
 class SlotOwnershipTable;
+class SlotMigrationStateMachine;
 }
 
 namespace command {
@@ -92,6 +93,10 @@ CanonicalizeResult canonicalizeWrite(const std::vector<std::string>& request,
                                      UnixMillis logical_time_ms,
                                      const cluster::SlotOwnershipTable& ownership);
 
+// Every key the command writes to. All of them share one slot, because
+// canonicalization rejects cross-slot writes.
+std::vector<std::string> commandKeys(const CanonicalCommand& command);
+
 // Stable, endian-independent binary format suitable for LogEntry::payload.
 std::string encodeCanonicalCommand(const CanonicalCommand& command);
 bool decodeCanonicalCommand(const std::string& encoded, CanonicalCommand& command,
@@ -121,8 +126,17 @@ struct ApplyResult {
 
 class DeterministicStateMachine {
 public:
-    DeterministicStateMachine(Database& database, cluster::ShardId shard)
-        : database_(database), shard_(shard) {}
+    // Marks the database as replicated, which disables its wall-clock-driven
+    // background expiry; see Database::markReplicated().
+    DeterministicStateMachine(Database& database, cluster::ShardId shard);
+
+    // While a slot is migrating out of this shard, the recorder turns each
+    // applied write into a post-image delta. It runs on every replica at the
+    // same point in the log, so the delta journal is replicated state and not a
+    // leader-local side effect.
+    void setMigrationRecorder(cluster::SlotMigrationStateMachine* recorder) {
+        migration_ = recorder;
+    }
 
     ApplyResult apply(const std::string& log_payload,
                       const SlotOwnership& current_ownership);
@@ -132,10 +146,18 @@ public:
                       const cluster::LocalSlotOwnership& current_ownership);
     ApplyResult apply(const CanonicalCommand& command,
                       const cluster::LocalSlotOwnership& current_ownership);
+    // Looks the slot's committed ownership up itself, which is what an applier
+    // driving a whole Raft group wants.
+    ApplyResult apply(const std::string& log_payload,
+                      const cluster::SlotOwnershipTable& ownership);
 
 private:
+    ApplyResult execute(const CanonicalCommand& command,
+                        const SlotOwnership& current_ownership);
+
     Database& database_;
     cluster::ShardId shard_;
+    cluster::SlotMigrationStateMachine* migration_ = nullptr;
 };
 
 } // namespace command

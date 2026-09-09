@@ -1,5 +1,7 @@
 #include "mini_redis/cluster/MetadataStateMachine.hpp"
 
+#include "mini_redis/cluster/SlotMigration.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <set>
@@ -121,6 +123,60 @@ bool legalPhaseTransition(MigrationPhase from, MigrationPhase to) {
     }
 }
 
+// After the source is fenced its proof is the only thing that authorizes the
+// owner switch, so it must be carried forward byte for byte.
+bool proofCarriedForward(MigrationPhase phase) {
+    return phase == MigrationPhase::kSourceFenced ||
+           phase == MigrationPhase::kTargetActiveAsk ||
+           phase == MigrationPhase::kMetadataCommitted;
+}
+
+bool proofAuthorizes(const MetadataMigrationRecord& migration,
+                     const std::string& encoded, const MigrationKey& key,
+                     std::string& error) {
+    MigrationCommitProof proof;
+    if (!decodeCommitProof(encoded, key, proof, error)) {
+        return false;
+    }
+    if (proof.migration_id != migration.id || proof.slot != migration.slot ||
+        proof.source != migration.source || proof.target != migration.target ||
+        proof.from_epoch != migration.from_epoch ||
+        proof.to_epoch != migration.to_epoch) {
+        error = "commit proof does not match the migration intent";
+        return false;
+    }
+    return true;
+}
+
+// The target's half of the evidence. It has to name the same migration and,
+// crucially, carry the same digest as the fence proof: that is what says the
+// target activated the exact state the source stopped writing to, rather than
+// some other state it happened to have.
+bool activationAuthorizes(const MetadataMigrationRecord& migration,
+                          const std::string& encoded, const MigrationKey& key,
+                          std::string& error) {
+    MigrationActivationProof proof;
+    if (!decodeActivationProof(encoded, key, proof, error)) {
+        return false;
+    }
+    if (proof.migration_id != migration.id || proof.slot != migration.slot ||
+        proof.source != migration.source || proof.target != migration.target ||
+        proof.from_epoch != migration.from_epoch ||
+        proof.to_epoch != migration.to_epoch) {
+        error = "activation proof does not match the migration intent";
+        return false;
+    }
+    MigrationCommitProof fence;
+    if (!decodeCommitProof(migration.progress_proof, key, fence, error)) {
+        return false;
+    }
+    if (proof.digest != fence.digest) {
+        error = "the target activated a state the source never fenced";
+        return false;
+    }
+    return true;
+}
+
 bool validNodeStatus(std::uint64_t value) {
     return value >= static_cast<std::uint64_t>(MetadataNodeStatus::kJoining) &&
            value <= static_cast<std::uint64_t>(MetadataNodeStatus::kRemoved);
@@ -165,7 +221,13 @@ MetadataApplyResult MetadataStateMachine::remember(const MetadataCommand& comman
     DedupRecord record;
     record.encoded_command = encodeMetadataCommand(command);
     record.result = result;
-    dedup_[command.request_id] = std::move(record);
+    if (dedup_.emplace(command.request_id, std::move(record)).second) {
+        dedup_order_.push_back(command.request_id);
+    }
+    while (dedup_order_.size() > kMaxDedupEntries) {
+        dedup_.erase(dedup_order_.front());
+        dedup_order_.pop_front();
+    }
     return result;
 }
 
@@ -382,8 +444,40 @@ MetadataApplyResult MetadataStateMachine::applyNew(const MetadataCommand& comman
                 return reject(MetadataApplyStatus::kIllegalTransition,
                               "illegal migration phase transition");
             }
+            // Entering kSourceFenced is where the old epoch dies, so this is the
+            // one transition that has to prove the fence is committed.
+            std::string proof_error;
+            if (command.migration_phase == MigrationPhase::kSourceFenced) {
+                if (!proofAuthorizes(migration, command.progress_proof, key_,
+                                     proof_error)) {
+                    return reject(MetadataApplyStatus::kInvalidCommand,
+                                  std::move(proof_error));
+                }
+            } else if (proofCarriedForward(migration.phase) &&
+                       command.progress_proof != migration.progress_proof) {
+                return reject(MetadataApplyStatus::kInvalidCommand,
+                              "the fence proof cannot be replaced once the "
+                              "source is fenced");
+            }
+            // Recording that the target is live is the step that makes the
+            // commit legal, so this is where the target's evidence is demanded.
+            if (command.migration_phase == MigrationPhase::kTargetActiveAsk) {
+                if (!activationAuthorizes(migration, command.activation_proof, key_,
+                                          proof_error)) {
+                    return reject(MetadataApplyStatus::kInvalidCommand,
+                                  std::move(proof_error));
+                }
+            } else if (!migration.activation_proof.empty() &&
+                       command.activation_proof != migration.activation_proof) {
+                return reject(MetadataApplyStatus::kInvalidCommand,
+                              "the activation proof cannot be replaced once the "
+                              "target is active");
+            }
             migration.phase = command.migration_phase;
             migration.progress_proof = command.progress_proof;
+            if (!command.activation_proof.empty()) {
+                migration.activation_proof = command.activation_proof;
+            }
             break;
         }
 
@@ -404,6 +498,25 @@ MetadataApplyResult MetadataStateMachine::applyNew(const MetadataCommand& comman
                 command.expected_ownership_epoch != migration.from_epoch) {
                 return reject(MetadataApplyStatus::kStaleEpoch,
                               "owner changed before migration commit");
+            }
+            std::string commit_proof_error;
+            if (command.progress_proof != migration.progress_proof ||
+                !proofAuthorizes(migration, command.progress_proof, key_,
+                                 commit_proof_error)) {
+                return reject(MetadataApplyStatus::kInvalidCommand,
+                              commit_proof_error.empty()
+                                  ? "commit must carry the fence proof unchanged"
+                                  : std::move(commit_proof_error));
+            }
+            // Both halves, re-checked at the moment of the switch: the source
+            // stopped writing, and the target holds exactly what it stopped at.
+            if (command.activation_proof != migration.activation_proof ||
+                !activationAuthorizes(migration, command.activation_proof, key_,
+                                      commit_proof_error)) {
+                return reject(MetadataApplyStatus::kInvalidCommand,
+                              commit_proof_error.empty()
+                                  ? "commit must carry the activation proof unchanged"
+                                  : std::move(commit_proof_error));
             }
             slot.active_group = migration.target;
             slot.ownership_epoch = migration.to_epoch;
@@ -482,10 +595,12 @@ std::string MetadataStateMachine::snapshotBytes() const {
         writer.number(migration.to_epoch, 8);
         writer.number(static_cast<std::uint8_t>(migration.phase), 1);
         writer.string(migration.progress_proof);
+        writer.string(migration.activation_proof);
     }
 
-    writer.number(dedup_.size(), 4);
-    for (const auto& [request_id, record] : dedup_) {
+    writer.number(dedup_order_.size(), 4);
+    for (const std::string& request_id : dedup_order_) {
+        const DedupRecord& record = dedup_.at(request_id);
         writer.string(request_id);
         writer.string(record.encoded_command);
         writer.number(static_cast<std::uint8_t>(record.result.status), 1);
@@ -572,11 +687,13 @@ bool MetadataStateMachine::installSnapshot(const std::string& bytes, std::string
             !reader.number(8, migration.to_epoch) ||
             !reader.number(1, value) || !validMigrationPhase(value)) return false;
         migration.phase = static_cast<MigrationPhase>(value);
-        if (!reader.string(migration.progress_proof)) return false;
+        if (!reader.string(migration.progress_proof) ||
+            !reader.string(migration.activation_proof)) return false;
         restored.migrations[migration.id] = std::move(migration);
     }
 
-    if (!reader.number(4, count) || count > kMaxItems) return false;
+    if (!reader.number(4, count) || count > kMaxDedupEntries) return false;
+    std::deque<std::string> restored_order;
     for (std::uint64_t index = 0; index < count; ++index) {
         std::string request_id;
         DedupRecord record;
@@ -586,7 +703,11 @@ bool MetadataStateMachine::installSnapshot(const std::string& bytes, std::string
         record.result.status = static_cast<MetadataApplyStatus>(value);
         if (!reader.number(8, record.result.revision) ||
             !reader.string(record.result.error)) return false;
-        restored_dedup[request_id] = std::move(record);
+        if (!restored_dedup.emplace(request_id, std::move(record)).second) {
+            error = "duplicate request id in metadata snapshot";
+            return false;
+        }
+        restored_order.push_back(std::move(request_id));
     }
     if (!reader.done() || restored.cluster_id.empty()) {
         error = "trailing or uninitialized metadata snapshot";
@@ -594,6 +715,7 @@ bool MetadataStateMachine::installSnapshot(const std::string& bytes, std::string
     }
     metadata_ = std::move(restored);
     dedup_ = std::move(restored_dedup);
+    dedup_order_ = std::move(restored_order);
     error.clear();
     return true;
 }

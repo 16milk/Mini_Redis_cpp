@@ -67,7 +67,13 @@ struct MetadataMigrationRecord {
     std::uint64_t from_epoch = 0;
     std::uint64_t to_epoch = 0;
     MigrationPhase phase = MigrationPhase::kPreparing;
+    // The source's signed fence proof. From kSourceFenced onward it is frozen:
+    // it is the only thing authorizing the old epoch to be retired.
     std::string progress_proof;
+    // The target's signed activation proof, required before the owner switches.
+    // Without it the control plane would be moving a slot on the say-so of the
+    // shard that is giving it away, with no evidence anyone received it.
+    std::string activation_proof;
 };
 
 // Logical state applied by the dedicated metadata Raft group. Ordered maps make

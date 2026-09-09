@@ -1,5 +1,7 @@
 #include "mini_redis/cluster/MetadataStateMachine.hpp"
 
+#include "mini_redis/cluster/SlotMigration.hpp"
+
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -23,6 +25,11 @@ cluster::MetadataCommand base(cluster::MetadataOperation operation,
     return command;
 }
 
+const cluster::MigrationKey& testMigrationKey() {
+    static const cluster::MigrationKey key("cluster-migration-secret");
+    return key;
+}
+
 cluster::MetadataNodeRecord node(const std::string& id, std::uint16_t port) {
     cluster::MetadataNodeRecord record;
     record.id = id;
@@ -43,7 +50,7 @@ cluster::MetadataApplyResult apply(cluster::MetadataStateMachine& machine,
 } // namespace
 
 int main() {
-    cluster::MetadataStateMachine machine;
+    cluster::MetadataStateMachine machine{testMigrationKey()};
 
     cluster::MetadataCommand initialize =
         base(cluster::MetadataOperation::kInitializeCluster, "init", 0);
@@ -128,7 +135,6 @@ int main() {
         cluster::MigrationPhase::kPrepared,
         cluster::MigrationPhase::kCopyingBase,
         cluster::MigrationPhase::kCatchingUp,
-        cluster::MigrationPhase::kSourceFenced,
     };
     int phase_request = 0;
     for (cluster::MigrationPhase phase : phases) {
@@ -143,6 +149,67 @@ int main() {
         apply(machine, advance);
     }
 
+    cluster::MigrationCommitProof proof;
+    proof.migration_id = "migration-42";
+    proof.slot = 42;
+    proof.source = 1;
+    proof.target = 2;
+    proof.from_epoch = 1;
+    proof.to_epoch = 2;
+    proof.fence_term = 7;
+    proof.fence_index = 91;
+    proof.read_index = 94;
+    proof.fence_sequence = 12;
+    proof.logical_time_ms = 1'700'000'000'000;
+    proof.digest = "0123456789abcdef0123456789abcdef";
+    const std::string encoded_proof = cluster::encodeCommitProof(proof, testMigrationKey());
+
+    cluster::MetadataCommand unproven_fence =
+        base(cluster::MetadataOperation::kAdvanceMigration, "unproven-fence",
+             machine.metadata().revision);
+    unproven_fence.migration_id = "migration-42";
+    unproven_fence.expected_ownership_epoch = 1;
+    unproven_fence.migration_phase = cluster::MigrationPhase::kSourceFenced;
+    unproven_fence.progress_proof = "trust me";
+    expect(machine.apply(unproven_fence).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "the fence phase cannot be entered without a commit proof");
+
+    cluster::MigrationCommitProof unbarriered = proof;
+    unbarriered.read_index = proof.fence_index - 1;
+    cluster::MetadataCommand stale_leader_fence =
+        base(cluster::MetadataOperation::kAdvanceMigration, "stale-leader-fence",
+             machine.metadata().revision);
+    stale_leader_fence.migration_id = "migration-42";
+    stale_leader_fence.expected_ownership_epoch = 1;
+    stale_leader_fence.migration_phase = cluster::MigrationPhase::kSourceFenced;
+    stale_leader_fence.progress_proof = cluster::encodeCommitProof(unbarriered, testMigrationKey());
+    expect(machine.apply(stale_leader_fence).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "a proof whose read barrier precedes the fence is rejected");
+
+    cluster::MigrationCommitProof foreign = proof;
+    foreign.slot = 43;
+    cluster::MetadataCommand foreign_fence =
+        base(cluster::MetadataOperation::kAdvanceMigration, "foreign-fence",
+             machine.metadata().revision);
+    foreign_fence.migration_id = "migration-42";
+    foreign_fence.expected_ownership_epoch = 1;
+    foreign_fence.migration_phase = cluster::MigrationPhase::kSourceFenced;
+    foreign_fence.progress_proof = cluster::encodeCommitProof(foreign, testMigrationKey());
+    expect(machine.apply(foreign_fence).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "a proof for another slot cannot fence this migration");
+
+    cluster::MetadataCommand fence =
+        base(cluster::MetadataOperation::kAdvanceMigration, "fence",
+             machine.metadata().revision);
+    fence.migration_id = "migration-42";
+    fence.expected_ownership_epoch = 1;
+    fence.migration_phase = cluster::MigrationPhase::kSourceFenced;
+    fence.progress_proof = encoded_proof;
+    apply(machine, fence);
+
     cluster::MetadataCommand rollback =
         base(cluster::MetadataOperation::kAdvanceMigration, "unsafe-rollback",
              machine.metadata().revision);
@@ -153,20 +220,101 @@ int main() {
                cluster::MetadataApplyStatus::kIllegalTransition,
            "source fence is a roll-forward boundary");
 
+    cluster::MetadataCommand swapped_proof =
+        base(cluster::MetadataOperation::kAdvanceMigration, "swapped-proof",
+             machine.metadata().revision);
+    swapped_proof.migration_id = "migration-42";
+    swapped_proof.expected_ownership_epoch = 1;
+    swapped_proof.migration_phase = cluster::MigrationPhase::kTargetActiveAsk;
+    cluster::MigrationCommitProof weaker = proof;
+    weaker.fence_index = 1;
+    swapped_proof.progress_proof = cluster::encodeCommitProof(weaker, testMigrationKey());
+    expect(machine.apply(swapped_proof).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "the fence proof cannot be swapped after the source is fenced");
+
+    // Marking the target live is what makes the owner switch legal, so it has
+    // to carry the target's own evidence, digest-matched to the fence.
+    cluster::MigrationActivationProof activation;
+    activation.migration_id = "migration-42";
+    activation.slot = 42;
+    activation.source = 1;
+    activation.target = 2;
+    activation.from_epoch = 1;
+    activation.to_epoch = 2;
+    activation.activate_term = 5;
+    activation.activate_index = 33;
+    activation.read_index = 37;
+    activation.digest = proof.digest;
+    const std::string encoded_activation =
+        cluster::encodeActivationProof(activation, testMigrationKey());
+
+    cluster::MetadataCommand unproven_activate =
+        base(cluster::MetadataOperation::kAdvanceMigration, "unproven-active",
+             machine.metadata().revision);
+    unproven_activate.migration_id = "migration-42";
+    unproven_activate.expected_ownership_epoch = 1;
+    unproven_activate.migration_phase = cluster::MigrationPhase::kTargetActiveAsk;
+    unproven_activate.progress_proof = encoded_proof;
+    expect(machine.apply(unproven_activate).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "the target cannot be marked live without its activation proof");
+
+    cluster::MigrationActivationProof other_state = activation;
+    other_state.digest = "ffffffffffffffffffffffffffffffff";
+    cluster::MetadataCommand wrong_state_activate =
+        base(cluster::MetadataOperation::kAdvanceMigration, "wrong-state-active",
+             machine.metadata().revision);
+    wrong_state_activate.migration_id = "migration-42";
+    wrong_state_activate.expected_ownership_epoch = 1;
+    wrong_state_activate.migration_phase = cluster::MigrationPhase::kTargetActiveAsk;
+    wrong_state_activate.progress_proof = encoded_proof;
+    wrong_state_activate.activation_proof =
+        cluster::encodeActivationProof(other_state, testMigrationKey());
+    expect(machine.apply(wrong_state_activate).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "an activation whose digest differs from the fence is rejected");
+
     cluster::MetadataCommand activate =
         base(cluster::MetadataOperation::kAdvanceMigration, "target-active",
              machine.metadata().revision);
     activate.migration_id = "migration-42";
     activate.expected_ownership_epoch = 1;
     activate.migration_phase = cluster::MigrationPhase::kTargetActiveAsk;
+    activate.progress_proof = encoded_proof;
+    activate.activation_proof = encoded_activation;
     apply(machine, activate);
+
+    cluster::MetadataCommand unproven_commit =
+        base(cluster::MetadataOperation::kCommitMigration, "unproven-commit",
+             machine.metadata().revision);
+    unproven_commit.migration_id = "migration-42";
+    unproven_commit.expected_ownership_epoch = 1;
+    expect(machine.apply(unproven_commit).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "the owner switch requires the fence proof");
+    expect(machine.metadata().slots[42].active_group == 1,
+           "a rejected commit leaves the owner untouched");
+
+    cluster::MetadataCommand source_only_commit =
+        base(cluster::MetadataOperation::kCommitMigration, "source-only-commit",
+             machine.metadata().revision);
+    source_only_commit.migration_id = "migration-42";
+    source_only_commit.expected_ownership_epoch = 1;
+    source_only_commit.progress_proof = encoded_proof;
+    expect(machine.apply(source_only_commit).status ==
+               cluster::MetadataApplyStatus::kInvalidCommand,
+           "the owner does not move on the source's word alone");
+    expect(machine.metadata().slots[42].active_group == 1,
+           "a commit without target evidence leaves the owner untouched");
 
     cluster::MetadataCommand commit =
         base(cluster::MetadataOperation::kCommitMigration, "metadata-commit",
              machine.metadata().revision);
     commit.migration_id = "migration-42";
     commit.expected_ownership_epoch = 1;
-    commit.progress_proof = "verified-proof-tuple";
+    commit.progress_proof = encoded_proof;
+    commit.activation_proof = encoded_activation;
     apply(machine, commit);
     expect(machine.metadata().slots[42].active_group == 2 &&
                machine.metadata().slots[42].ownership_epoch == 2,
@@ -178,6 +326,8 @@ int main() {
     cleanup.migration_id = "migration-42";
     cleanup.expected_ownership_epoch = 2;
     cleanup.migration_phase = cluster::MigrationPhase::kCleanup;
+    cleanup.progress_proof = encoded_proof;
+    cleanup.activation_proof = encoded_activation;
     apply(machine, cleanup);
 
     cluster::MetadataCommand finish =
@@ -191,7 +341,7 @@ int main() {
            "cleanup returns the slot to stable");
 
     const std::string snapshot = machine.snapshotBytes();
-    cluster::MetadataStateMachine restored;
+    cluster::MetadataStateMachine restored{testMigrationKey()};
     std::string error;
     expect(restored.installSnapshot(snapshot, error), "metadata snapshot restores");
     expect(restored.metadata().revision == machine.metadata().revision &&

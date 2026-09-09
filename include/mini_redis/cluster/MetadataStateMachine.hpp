@@ -1,8 +1,11 @@
 #pragma once
 
 #include "mini_redis/cluster/MetadataCommand.hpp"
+#include "mini_redis/cluster/MigrationAuth.hpp"
 #include "mini_redis/consensus/RaftTypes.hpp"
 
+#include <cstddef>
+#include <deque>
 #include <map>
 #include <string>
 
@@ -27,8 +30,17 @@ struct MetadataApplyResult {
     bool applied() const { return status == MetadataApplyStatus::kApplied; }
 };
 
+// Retries have to stay idempotent across a leader change, but the table that
+// makes them idempotent cannot grow without bound or the snapshot eventually
+// becomes too large to ship. Eviction is by insertion order, which every
+// replica agrees on because every replica applies the same command sequence.
+constexpr std::size_t kMaxDedupEntries = 4096;
+
 class MetadataStateMachine {
 public:
+    MetadataStateMachine() = default;
+    explicit MetadataStateMachine(MigrationKey key) : key_(std::move(key)) {}
+
     MetadataApplyResult apply(const consensus::LogEntry& entry);
     MetadataApplyResult apply(const std::string& payload);
     MetadataApplyResult apply(const MetadataCommand& command);
@@ -53,6 +65,10 @@ private:
 
     ClusterMetadata metadata_;
     std::map<std::string, DedupRecord> dedup_;
+    // Insertion order for dedup_, so eviction and snapshot layout are identical
+    // on every replica.
+    std::deque<std::string> dedup_order_;
+    MigrationKey key_;
 };
 
 } // namespace cluster

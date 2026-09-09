@@ -26,8 +26,10 @@ set(CORE_SOURCES
     src/cluster/MetadataController.cpp
     src/cluster/MetadataStateMachine.cpp
     src/cluster/MetadataWatcher.cpp
+    src/cluster/MigrationAuth.cpp
     src/cluster/Router.cpp
     src/cluster/Slot.cpp
+    src/cluster/SlotMigration.cpp
     src/cluster/SlotOwnership.cpp
     src/cluster/Topology.cpp
     src/command/CanonicalCommand.cpp
@@ -156,6 +158,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_metadata_raft_test PRIVATE mini_redis_core)
     add_test(NAME metadata_raft COMMAND mini_redis_metadata_raft_test)
+
+    add_executable(mini_redis_slot_migration_test
+        tests/SlotMigrationTest.cpp
+    )
+    target_link_libraries(mini_redis_slot_migration_test PRIVATE mini_redis_core)
+    add_test(NAME slot_migration COMMAND mini_redis_slot_migration_test)
 endif()
 
 # （可选）设置输出目录

@@ -31,6 +31,14 @@ struct ExpirationStats {
     std::size_t active_expire_budget_exhausted_total = 0;
 };
 
+// One stored key as it physically exists, with the absolute expire deadline
+// instead of a remaining TTL.
+struct StoredEntry {
+    std::string key;
+    std::shared_ptr<RedisObject> object;
+    UnixMillis expire_at_ms = 0;  // 0 when the key has no TTL
+};
+
 class Database {
 public:
     using NowFunction = std::function<UnixMillis()>;
@@ -105,10 +113,33 @@ public:
     long long ttl(const std::string& key, bool milliseconds);
     bool persist(const std::string& key);
 
+    // --- Bulk key transfer ---
+    // These four never run lazy expiration, so two replicas that applied the
+    // same log prefix always observe the same entries. Callers that need
+    // expiration semantics compare `expire_at_ms` against their own replicated
+    // logical time instead of against the wall clock.
+    bool exportKey(const std::string& key, StoredEntry& out) const;
+    std::vector<StoredEntry> exportKeys(
+        const std::function<bool(const std::string&)>& select) const;
+    void importKey(const std::string& key, std::shared_ptr<RedisObject> object,
+                   UnixMillis expire_at_ms);
+    std::size_t dropKeys(const std::function<bool(const std::string&)>& select);
+
     // --- Persistence ---
     bool saveRdb(const std::string& filename = "dump.rdb") const;
 
+    // Marks this database as the state of a Raft group. Every mutation then has
+    // to arrive through the log, so the background expiry cycle is disabled: it
+    // reads the wall clock, and two replicas whose clocks differ would reap
+    // different keys and silently stop being replicas of each other. Replicated
+    // expiry instead happens when a command observes a passed deadline at the
+    // log entry's logical time. Retaining an expired key costs memory; reaping
+    // one locally costs consistency.
+    void markReplicated() { replicated_ = true; }
+    bool replicated() const { return replicated_; }
+
     // --- Periodic maintenance ---
+    // A no-op on a replicated database; see markReplicated().
     ExpireCycleResult activeExpireCycle(
         std::size_t max_keys = 64,
         std::chrono::microseconds max_runtime = std::chrono::milliseconds(1));
@@ -134,6 +165,7 @@ private:
     NowFunction now_function_;
     std::optional<UnixMillis> logical_now_ms_;
     ExpirationStats expiration_stats_;
+    bool replicated_ = false;
 
     std::shared_ptr<RedisObject> lookupKey(const std::string& key);
     void storeKey(const std::string& key, std::shared_ptr<RedisObject> object);

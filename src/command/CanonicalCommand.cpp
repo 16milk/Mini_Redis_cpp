@@ -2,6 +2,7 @@
 
 #include "mini_redis/cluster/Router.hpp"
 #include "mini_redis/cluster/Slot.hpp"
+#include "mini_redis/cluster/SlotMigration.hpp"
 #include "mini_redis/cluster/SlotOwnership.hpp"
 #include "mini_redis/command/CommandSpec.hpp"
 #include "mini_redis/core/Database.hpp"
@@ -418,6 +419,24 @@ CanonicalizeResult canonicalizeWrite(
     return result;
 }
 
+std::vector<std::string> commandKeys(const CanonicalCommand& command) {
+    std::vector<std::string> keys;
+    if (command.arguments.empty()) {
+        return keys;
+    }
+    if (command.id == CommandId::kDel) {
+        keys.reserve(command.arguments.size());
+        for (const CanonicalArgument& argument : command.arguments) {
+            if (argument.type == ArgumentType::kBytes) {
+                keys.push_back(argument.bytes);
+            }
+        }
+    } else if (command.arguments.front().type == ArgumentType::kBytes) {
+        keys.push_back(command.arguments.front().bytes);
+    }
+    return keys;
+}
+
 std::string encodeCanonicalCommand(const CanonicalCommand& command) {
     std::string error;
     if (command.version != kCanonicalCommandVersion ||
@@ -535,6 +554,12 @@ bool decodeCanonicalCommand(const std::string& encoded, CanonicalCommand& comman
     return true;
 }
 
+DeterministicStateMachine::DeterministicStateMachine(Database& database,
+                                                     cluster::ShardId shard)
+    : database_(database), shard_(shard) {
+    database_.markReplicated();
+}
+
 ApplyResult DeterministicStateMachine::apply(
     const std::string& log_payload, const SlotOwnership& current_ownership) {
     CanonicalCommand command;
@@ -548,6 +573,16 @@ ApplyResult DeterministicStateMachine::apply(
 }
 
 ApplyResult DeterministicStateMachine::apply(
+    const CanonicalCommand& command, const SlotOwnership& current_ownership) {
+    ApplyResult result = execute(command, current_ownership);
+    if (result.status == ApplyStatus::kApplied && migration_ != nullptr) {
+        migration_->captureWrite(command.slot, commandKeys(command),
+                                 command.logical_time_ms);
+    }
+    return result;
+}
+
+ApplyResult DeterministicStateMachine::execute(
     const CanonicalCommand& command, const SlotOwnership& current_ownership) {
     std::string error;
     if (command.version != kCanonicalCommandVersion ||
@@ -676,6 +711,18 @@ ApplyResult DeterministicStateMachine::apply(
         ownership.shard = cluster::kNoShard;
     }
     return apply(command, ownership);
+}
+
+ApplyResult DeterministicStateMachine::apply(
+    const std::string& log_payload, const cluster::SlotOwnershipTable& ownership) {
+    CanonicalCommand command;
+    std::string error;
+    if (!decodeCanonicalCommand(log_payload, command, error)) {
+        ApplyResult result;
+        result.error = std::move(error);
+        return result;
+    }
+    return apply(command, ownership.get(command.slot));
 }
 
 } // namespace command

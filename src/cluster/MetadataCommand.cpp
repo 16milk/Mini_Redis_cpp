@@ -133,6 +133,7 @@ std::string encodeMetadataCommand(const MetadataCommand& command) {
     appendUnsigned(out, command.target_group, 4);
     appendUnsigned(out, static_cast<std::uint8_t>(command.migration_phase), 1);
     appendString(out, command.progress_proof);
+    appendString(out, command.activation_proof);
     return out;
 }
 
@@ -205,6 +206,7 @@ bool decodeMetadataCommand(const std::string& encoded, MetadataCommand& command,
     decoded.target_group = static_cast<ShardId>(value);
     if (!readUnsigned(encoded, offset, 1, value) || !validMigrationPhase(value) ||
         !readString(encoded, offset, decoded.progress_proof) ||
+        !readString(encoded, offset, decoded.activation_proof) ||
         offset != encoded.size()) {
         error = "trailing or invalid metadata migration";
         return false;
