@@ -3,10 +3,54 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <limits>
 
-Connection::Connection(int sockfd) : sockfd_(sockfd) {}
+namespace {
+
+std::uint64_t nextConnectionId() {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
+Connection::Connection(int sockfd, runtime::TrafficClass traffic)
+    : sockfd_(sockfd),
+      id_(nextConnectionId()),
+      traffic_(traffic),
+      limits_(runtime::limitsFor(traffic)),
+      pipeline_(limits_) {}
+
+void Connection::setTrafficClass(runtime::TrafficClass traffic) {
+    traffic_ = traffic;
+    limits_ = runtime::limitsFor(traffic);
+    pipeline_.setLimits(limits_);
+}
+
+bool Connection::shouldPauseReads() const {
+    return downstream_paused_ || pipeline_.pauseReads() ||
+           pendingInputBytes() >= limits_.input_high_watermark ||
+           pendingWriteBytes() >= limits_.output_high_watermark;
+}
+
+bool Connection::shouldResumeReads() const {
+    return !downstream_paused_ && pipeline_.belowResumeWatermark() &&
+           pendingInputBytes() < limits_.input_low_watermark &&
+           pendingWriteBytes() < limits_.output_low_watermark;
+}
+
+void Connection::updateReadPause() {
+    if (!reads_paused_) {
+        if (shouldPauseReads() ||
+            pendingWriteBytes() >= limits_.output_low_watermark) {
+            reads_paused_ = true;
+        }
+    } else if (shouldResumeReads()) {
+        reads_paused_ = false;
+    }
+}
 
 Connection::~Connection() {
     if (sockfd_ != -1) close(sockfd_);

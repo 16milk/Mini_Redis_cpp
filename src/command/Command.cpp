@@ -136,7 +136,12 @@ std::string CommandHandler::execute(const std::vector<std::string>& args) {
 
 std::string CommandHandler::execute(const std::vector<std::string>& args,
                                     cluster::ClientSession& session) {
-    const std::uint64_t request_seq = session.beginRequest();
+    return executePrepared(args, session, session.beginRequest());
+}
+
+std::string CommandHandler::executePrepared(const std::vector<std::string>& args,
+                                            cluster::ClientSession& session,
+                                            std::uint64_t request_seq) {
     const AskingConsumer asking_consumer(session, request_seq);
 
     if (args.empty()) {
@@ -168,6 +173,13 @@ std::string CommandHandler::execute(const std::vector<std::string>& args,
         return encodeRedirect(decision);
     }
     return dispatch(cmd, args);
+}
+
+std::string CommandHandler::executeOnStore(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        return RespParser::encodeError("empty command");
+    }
+    return dispatch(toUpper(args[0]), args);
 }
 
 std::string CommandHandler::encodeRedirect(const cluster::RouteDecision& decision) {

@@ -30,6 +30,16 @@ public:
     std::string execute(const std::vector<std::string>& args,
                         cluster::ClientSession& session);
 
+    // Reactor 已经分配了 request_seq 时使用，避免二次编号。
+    std::string executePrepared(const std::vector<std::string>& args,
+                                cluster::ClientSession& session,
+                                std::uint64_t request_seq);
+
+    // Group Actor 串行执行入口：不再碰连接会话，只访问本分片状态机。
+    std::string executeOnStore(const std::vector<std::string>& args);
+
+    static std::string encodeRedirect(const cluster::RouteDecision& decision);
+
 private:
     Database& db_;
     cluster::ClusterRouter* router_ = nullptr;
@@ -38,8 +48,6 @@ private:
     // 命令名已大写，负责把请求送到具体处理函数。
     std::string dispatch(const std::string& command,
                          const std::vector<std::string>& args);
-
-    static std::string encodeRedirect(const cluster::RouteDecision& decision);
 
     // 具体命令处理函数
     std::string handlePing(const std::vector<std::string>& args);

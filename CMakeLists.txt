@@ -56,6 +56,12 @@ set(CORE_SOURCES
     src/persistence/LogicalObject.cpp
     src/persistence/PersistentStorage.cpp
     src/persistence/Rdb.cpp
+    src/runtime/CompletionQueue.cpp
+    src/runtime/GroupActor.cpp
+    src/runtime/GroupScheduler.cpp
+    src/runtime/PipelineReorder.cpp
+    src/runtime/RequestFrontend.cpp
+    src/runtime/ResourcePool.cpp
 )
 
 add_library(mini_redis_core STATIC ${CORE_SOURCES})
@@ -66,6 +72,7 @@ target_link_libraries(mini_redis_core PUBLIC Threads::Threads)
 add_executable(mini_redis_server
     src/main.cpp
     src/net/Connection.cpp
+    src/net/Reactor.cpp
     src/net/Server.cpp
 )
 target_link_libraries(mini_redis_server PRIVATE mini_redis_core)
@@ -175,6 +182,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(mini_redis_wal_snapshot_test PRIVATE mini_redis_core)
     add_test(NAME wal_snapshot COMMAND mini_redis_wal_snapshot_test)
+
+    add_executable(mini_redis_runtime_concurrency_test
+        tests/RuntimeConcurrencyTest.cpp
+    )
+    target_link_libraries(mini_redis_runtime_concurrency_test PRIVATE mini_redis_core)
+    add_test(NAME runtime_concurrency COMMAND mini_redis_runtime_concurrency_test)
 endif()
 
 # （可选）设置输出目录

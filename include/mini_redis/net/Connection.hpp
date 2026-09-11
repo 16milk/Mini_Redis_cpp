@@ -1,8 +1,11 @@
 #pragma once
 
 #include "mini_redis/cluster/ClientSession.hpp"
+#include "mini_redis/runtime/IoBudget.hpp"
+#include "mini_redis/runtime/PipelineReorder.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 class Connection {
@@ -14,7 +17,8 @@ public:
         std::size_t read_calls = 0;
     };
 
-    explicit Connection(int sockfd);
+    explicit Connection(int sockfd,
+                        runtime::TrafficClass traffic = runtime::TrafficClass::kClient);
     ~Connection();
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
@@ -22,6 +26,18 @@ public:
     Connection& operator=(Connection&&) = delete;
 
     int get_fd() const { return sockfd_; }
+    std::uint64_t id() const { return id_; }
+    std::uint64_t generation() const { return generation_; }
+
+    runtime::TrafficClass trafficClass() const { return traffic_; }
+    void setTrafficClass(runtime::TrafficClass traffic);
+
+    const runtime::IoLimits& limits() const { return limits_; }
+    runtime::PipelineReorder& pipeline() { return pipeline_; }
+    const runtime::PipelineReorder& pipeline() const { return pipeline_; }
+
+    std::uint32_t epollInterest() const { return epoll_interest_; }
+    void setEpollInterest(std::uint32_t interest) { epoll_interest_ = interest; }
 
     // 从 socket 读取数据到 read_buffer_。对端半关闭时保留已读数据和待写响应。
     bool readFromSocket();
@@ -50,6 +66,13 @@ public:
     std::size_t pendingInputBytes() const { return read_buffer_.size(); }
     void discardInput() { read_buffer_.clear(); }
 
+    bool shouldPauseReads() const;
+    bool shouldResumeReads() const;
+    void setDownstreamPaused(bool paused) { downstream_paused_ = paused; }
+    bool downstreamPaused() const { return downstream_paused_; }
+    bool readsPaused() const { return reads_paused_; }
+    void updateReadPause();
+
     // 检查连接是否应关闭（如对端关闭）
     bool shouldClose() const { return closed_; }
     bool peerReadClosed() const { return peer_read_closed_; }
@@ -60,10 +83,18 @@ public:
 
 private:
     int sockfd_;
+    std::uint64_t id_ = 0;
+    std::uint64_t generation_ = 1;
+    runtime::TrafficClass traffic_ = runtime::TrafficClass::kClient;
+    runtime::IoLimits limits_{};
+    runtime::PipelineReorder pipeline_;
+    std::uint32_t epoll_interest_ = 0;
     std::string read_buffer_;
     std::string write_buffer_;
     std::size_t write_offset_ = 0;
     bool closed_ = false;
     bool peer_read_closed_ = false;
+    bool reads_paused_ = false;
+    bool downstream_paused_ = false;
     cluster::ClientSession session_;
 };
